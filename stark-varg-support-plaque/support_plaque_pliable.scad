@@ -1,9 +1,11 @@
 // Support de plaque rétractable - Stark Varg EX/SM
-// Style FL Specialparts : support plat sous le feu arrière, 2 joues portant l'axe,
+// Style FL Specialparts : support plat sous le garde-boue, 2 joues portant l'axe,
 // bras pivotant qui tient la plaque par 3 vis en triangle.
+// Platine arrière fixe : feu arrière LED (avec éclairage de plaque) + 2 clignotants.
 // La plaque passe de déployée (0°) à repliée à plat sous le garde-boue (90°).
 // Quincaillerie : vis M5x70 + rondelles + nylstop (axe, règle la friction)
-//                 piston à bille M6 (crans), 3 vis M5x20 + écrous (plaque).
+//                 piston à bille M6 (crans), 3 vis M5x20 + écrous (plaque),
+//                 feu arrière LED homologué à 2 goujons M5, 2 clignotants à tige.
 // Compatible "Parametric Model Maker" de MakerWorld / Customizer OpenSCAD.
 
 part = "assemblage"; // [assemblage, support_fixe, bras, porte_plaque]
@@ -24,8 +26,16 @@ axe_bas = 42;       // distance face d'appui / axe
 fix_d   = 6.5;      // vis de fixation (M6)
 fix_min = 30;       // lumières : entraxe min
 fix_max = 50;       // lumières : entraxe max
-clignotants = true; // trous Ø10,5 dans les joues pour clignotants à tige Ø10
-cligno_d = 10.5;
+
+/* [Feu et clignotants] */
+platine_h  = 28;    // hauteur de la platine arrière
+platine_ep = 6;
+cligno_d = 10.5;    // tige des clignotants (Ø10 ; 8.5 pour M8)
+cligno_entraxe = 220; // entraxe des clignotants (vérifier la largeur légale)
+feu_d   = 5.5;      // goujons M5 du feu arrière
+feu_min = 20;       // lumières : entraxe min
+feu_max = 60;       // entraxe max
+cable_d = 8;        // passage des fils
 
 /* [Pivot] */
 axe_d   = 5.4;     // vis M5
@@ -55,10 +65,25 @@ module joue()
         translate([-joue_R, 0]) square([2 * joue_R + 20, support_ep]);
     }
 
+// platine arrière verticale : feu au centre, clignotants aux extrémités
+module platine()
+    translate([0, -joue_R + 1, 0]) rotate([90, 0, 0]) difference() {
+        linear_extrude(platine_ep) hull() {
+            translate([-W / 2, 0]) square([W, platine_h]);
+            for (s = [-1, 1]) translate([s * cligno_entraxe / 2, platine_h / 2]) circle(cligno_d / 2 + 7);
+        }
+        for (s = [-1, 1]) {
+            translate([s * cligno_entraxe / 2, platine_h / 2, -1]) cylinder(d = cligno_d, h = platine_ep + 2);
+            hull() for (x = [feu_min / 2, feu_max / 2]) translate([s * x, platine_h / 2, -1]) cylinder(d = feu_d, h = platine_ep + 2);
+        }
+        translate([0, platine_h / 2, -1]) cylinder(d = cable_d, h = platine_ep + 2);
+    }
+
 module support_fixe() {
     yf = support_long - 10;
     difference() {
         union() {
+            platine();
             linear_extrude(support_ep) hull() {
                 translate([-W / 2, -joue_R]) square([W, 2 * joue_R]);
                 for (s = [-1, 1]) translate([s * fix_max / 2, yf]) circle(8);
@@ -68,7 +93,6 @@ module support_fixe() {
         translate([-W, 0, axe_bas]) rotate([0, 90, 0]) cylinder(d = axe_d, h = 2 * W);
         for (s = [-1, 1]) hull() for (x = [fix_min / 2, fix_max / 2])
             translate([s * x, yf, -1]) cylinder(d = fix_d, h = support_ep + 2);
-        if (clignotants) translate([-W, 0, axe_bas - 24]) rotate([0, 90, 0]) cylinder(d = cligno_d, h = 2 * W);
         // piston à bille dans la joue droite, côté support
         translate([xj - 1, 0, axe_bas - piston_r]) rotate([0, 90, 0]) cylinder(d = piston_d, h = joue_ep + 2);
     }
@@ -122,4 +146,9 @@ module mobile(a)
 if (part == "support_fixe") support_fixe();
 else if (part == "bras") bras();
 else if (part == "porte_plaque") porte_plaque();
-else rotate([0, 180, 0]) { support_fixe(); mobile(pliage); } // vue sur la moto
+else rotate([0, 180, 0]) { // vue sur la moto, feu et clignotants figurés
+    support_fixe(); mobile(pliage);
+    color("red") translate([-35, -joue_R - platine_ep - 15, 4]) cube([70, 15, platine_h - 8]);
+    for (s = [-1, 1]) color("orange") translate([s * cligno_entraxe / 2, -joue_R - platine_ep, platine_h / 2])
+        rotate([90, 0, 0]) cylinder(d = 18, h = 25);
+}
