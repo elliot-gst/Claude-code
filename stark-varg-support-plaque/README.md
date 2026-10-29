@@ -12,8 +12,8 @@ Ce support remplace la partie « plaque » du support d'homologation de l'EX. Il
 |---|---|---|
 | Feu arrière (garde-boue) | Feu + stop + clignotants intégrés, fixé par 2 vis Delta 6×14. Les clignotants intégrés ne sont **pas conformes UE**. | Reste en place, rien à démonter. |
 | Clignotants EU d'origine | Clignotant + feu de position + stop (3 en 1). Une fois branchés, ils désactivent les clignotants intégrés. | Montés sur les 2 pattes latérales (trou Ø10,5). |
-| Éclairage de plaque d'origine | LED, fixé par vis Delta 2,5×10. | Sous le « nez », orienté vers la plaque. |
-| Catadioptre arrière d'origine | Obligatoire. | Au dos du nez. |
+| Éclairage de plaque d'origine | LED, fixé par vis Delta 2,5×10. | Sous l'arrière de la coque, juste derrière la plaque, orienté vers son centre. |
+| Catadioptre arrière d'origine | Obligatoire. | Au dos de la coque. |
 | Support d'homologation EX | Polypropylène chargé fibre de verre, vissé à l'arrière par 2 vis Delta 6×18 T30 (5 N·m). | Ces 2 points servent à fixer le support fixe. |
 
 ## Pièces imprimées
@@ -21,13 +21,15 @@ Ce support remplace la partie « plaque » du support d'homologation de l'EX. Il
 | Fichier | Rôle | Orientation |
 |---|---|---|
 | `gabarit.stl` | **À imprimer en premier** (2 mm, ~15 min). Il sert à vérifier les vis et l'encombrement sous le garde-boue. | à plat |
-| `support_fixe.stl` | 140 × 94 mm. Il porte le pivot, les clignotants, l'éclairage et le catadioptre. Le nez est creux pour cacher les connecteurs. | face d'appui sur le plateau |
+| `support_fixe.stl` | Coque arrondie de 140 × 104 × 56 mm, en forme de bouclier vue de derrière. Les clignotants sortent de ses flancs, et deux pattes arrondies dessous portent le pivot. Elle est creuse et ouverte côté garde-boue : écrous et connecteurs y sont cachés. | face d'appui sur le plateau |
 | `bras.stl` | Bras pivotant, avec un trou de goupille à 0° et un à 90°. | à plat |
 | `porte_plaque.stl` | Dos de plaque 208 × 128 mm, invisible derrière une plaque FR 210 × 130. 4 trous de rivets Ø4,2. | face avant sur le plateau |
 
 - **Matière** : PETG ou ASA.
 - **Réglages** : 5 parois et 40 % de remplissage gyroïde pour le support et le bras ; 4 parois et 25 % pour le porte-plaque.
-- Pas de supports. Les trous horizontaux peuvent s'affaisser légèrement : repasse un foret si besoin.
+- Pas de supports : les nervures internes de la coque limitent les ponts à 30 mm environ. Si ton imprimante ponte mal, active des supports arborescents sur plateau uniquement, dans la cavité.
+- Les trous horizontaux peuvent s'affaisser légèrement : repasse un foret si besoin.
+- Pour un rendu « pièce d'origine », imprime en noir mat. Les faces visibles sur la moto sont en haut à l'impression : des couches de 0,12 à 0,16 mm lissent les courbes.
 
 ## Quincaillerie
 
@@ -58,9 +60,9 @@ Ensuite :
 ## Montage
 
 1. Débranche et démonte le support d'homologation. Coupe sa partie arrière (zone de la plaque) pour laisser passer la plaque repliée, comme pour le support FL Specialparts du commerce.
-2. Monte les clignotants EU sur les pattes, écrous à l'intérieur. Passe les fils par les trous du nez.
-3. Monte l'éclairage sous le nez, fil vers le haut, et le catadioptre au dos.
-4. Fais les connexions **dans le nez**, puis visse le support sous le garde-boue.
+2. Monte les clignotants EU dans les flancs de la coque, écrous à l'intérieur.
+3. Monte l'éclairage sous l'arrière de la coque, fil vers l'intérieur, et le catadioptre au dos.
+4. Fais les connexions **dans la coque**. Fais ressortir les fils par la gorge centrale vers l'avant, où sont les connecteurs d'origine. Visse ensuite le support sous le garde-boue.
 5. Assemble la plaque :
    - rivete la plaque sur le porte-plaque ;
    - visse le porte-plaque sur le bras avec les 3 vis M5 ;
@@ -70,6 +72,6 @@ Ensuite :
 ## Légalité (France / UE)
 
 - **Plaque** : 210 × 130 mm, rivetée, inclinée de 30° au plus, éclairée, avec catadioptre.
-- **Clignotants arrière** (R53) : au moins **180 mm entre les bords intérieurs des zones éclairées**, entre 350 et 1200 mm du sol, et à 300 mm au plus de l'arrière de la moto. Mesure-le une fois monté et ajuste `cligno_ecart` (140 mm par défaut entre les faces extérieures des pattes).
+- **Clignotants arrière** (R53) : au moins **180 mm entre les bords intérieurs des zones éclairées**, entre 350 et 1200 mm du sol, et à 300 mm au plus de l'arrière de la moto. Mesure-le une fois monté et ajuste `cligno_ecart` (140 mm par défaut, largeur de la coque au niveau des clignotants).
 - **Sur route**, la plaque doit être **déployée et goupillée**. Le support ne doit pas pivoter en roulant.
 - **Pièce artisanale** : ce support n'est pas homologué. En cas de contrôle, c'est l'équipement d'origine qui fait foi.

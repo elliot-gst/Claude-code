@@ -5,7 +5,7 @@ import trimesh
 from trimesh.transformations import rotation_matrix as Rm, translation_matrix as T
 
 AXE_BAS, R, EP_TOT, GOUPILLE_R = 42, 12, 7, 8
-PAD_X, PAD_Y, CLIGNO_Z = 62, -30, 24
+PAD_X, PAD_Y, CLIGNO_Z = 66.5, -29, 12
 PLATEAU = 256  # Bambu X1 / P1 / A1
 
 s, b, p = (trimesh.load(f"{n}.stl") for n in ("support_fixe", "bras", "porte_plaque"))
