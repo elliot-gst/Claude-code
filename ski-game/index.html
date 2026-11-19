@@ -76,10 +76,10 @@ canvas{position:fixed;inset:0;display:block}
     <dl class="ctl">
       <dt>Stick gauche</dt><dd>Au sol : tourner. Haut = schuss (position de recherche), bas = freiner.<br>En l'air : gauche/droite lance le spin, haut le frontflip, bas le backflip ; la rotation garde son élan. Spin + flip = Cork / Rodeo / Misty.</dd>
       <dt>Saut</dt><dd>Maintenir pour fléchir, relâcher pour ollie. Relâche au bord du kicker pour plus d'air.</dd>
-      <dt>Grab</dt><dd>Maintenir GRAB en l'air. Le stick choisit le grab : neutre Mute, droite Safety, haut Japan, bas Tail, gauche Truckdriver, diagonales Nose, Critical, Stalefish, Blunt. Tenu longtemps = Tweaked.</dd>
+      <dt>Grab</dt><dd>Maintenir GRAB en l'air. Le stick choisit le grab : neutre Mute, droite Safety, haut Japan, bas Tail, gauche Truckdriver, diagonales Nose, Critical, Stalefish, Blunt. Tenu longtemps = Tweaked. Lâche-le avant de toucher la neige.</dd>
       <dt>Au sol</dt><dd>GRAB tenu = butter (stick haut : nose, bas : tail), stick gauche/droite pour le faire tourner en 180 / 360.</dd>
       <dt>Rails</dt><dd>Coup de stick sur le rail = switch-up (50-50 ↔ boardslide). GRAB sur le rail compte aussi.</dd>
-      <dt>Réception</dt><dd>Automatique : près de la neige, le skieur se cale tout seul. Une réception approximative passe (« Limite », moins de points), seule une vraie grosse erreur fait tomber.</dd>
+      <dt>Réception</dt><dd>Lâche le stick un peu avant de toucher : le skieur freine sa rotation et se cale sur le 180° (ou le tour) suivant. Lâché trop tard, il touche en tournant. Vise la pente de réception : trop vite, tu atterris à plat.</dd>
     </dl>
     <p class="kb">Clavier : flèches / WASD, espace = saut, J K L I = grabs.</p>
     <button id="go">Lancer la descente</button>
@@ -133,6 +133,16 @@ function ground(x, z, o){
 }
 const normalAt = (x, z, out) => { ground(x, z, G); return out.set(-G.gx, 1, -G.gz).normalize(); };
 const railY = (r, z) => r.y0 + (r.y1 - r.y0) * (z - r.z0) / (r.z1 - r.z0);
+// Télésiège le long de la piste : pylônes tous les 45 m, câble montant (côté -1) et descendant (+1), portées droites qui fléchissent
+const LIFT_DX = -44, LIFT_STEP = 45, LIFT_H = 10.5, LIFT_W = 2.6;
+const liftX = z => cx(z) + LIFT_DX;
+function liftTop(k, out){ const z = k * LIFT_STEP + 10, x = liftX(z); return out.set(x, hNat(x, z) + LIFT_H, z); }
+const _lt0 = new V3(), _lt1 = new V3();
+function cableAt(z, side, out){
+  const u = (z - 10) / LIFT_STEP, k = Math.floor(u), t = u - k;
+  liftTop(k, _lt0); liftTop(k + 1, _lt1);
+  return out.set(_lt0.x + (_lt1.x - _lt0.x) * t + side * LIFT_W, _lt0.y + (_lt1.y - _lt0.y) * t - 4.4 * t * (1 - t) - 0.35, z);
+}
 
 /* ---------- Rendu ---------- */
 const renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance' });
@@ -147,50 +157,65 @@ scene.fog = new THREE.Fog(HORIZON, 70, 330);
 const cam = new THREE.PerspectiveCamera(64, innerWidth / innerHeight, 0.1, 2400);
 addEventListener('resize', () => { renderer.setSize(innerWidth, innerHeight); cam.aspect = innerWidth / innerHeight; cam.updateProjectionMatrix(); });
 
-const sunDir = new V3(-0.55, 0.62, 0.55).normalize();
+const sunDir = new V3(-0.6, 0.45, 0.6).normalize();
 const sky = new THREE.Mesh(new THREE.SphereGeometry(1800, 24, 12), new THREE.ShaderMaterial({
   side: THREE.BackSide, depthWrite: false, fog: false,
   uniforms: { top: { value: new THREE.Color(0x2c64a8) }, bot: { value: new THREE.Color(HORIZON) }, sun: { value: sunDir } },
   vertexShader: 'varying vec3 vP; void main(){ vP = normalize(position); gl_Position = projectionMatrix * modelViewMatrix * vec4(position,1.); }',
-  fragmentShader: 'uniform vec3 top; uniform vec3 bot; uniform vec3 sun; varying vec3 vP; void main(){ float h = clamp(vP.y*1.7+0.04,0.,1.); vec3 c = mix(bot, top, pow(h,0.65)); float s = max(dot(vP,sun),0.); c += vec3(1.,.93,.8)*(pow(s,900.)*1.6 + pow(s,12.)*0.18); gl_FragColor = vec4(c,1.); }'
+  fragmentShader: `uniform vec3 top; uniform vec3 bot; uniform vec3 sun; varying vec3 vP;
+    float hs(vec2 p){ return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
+    float ns(vec2 p){ vec2 i = floor(p), f = fract(p), u = f * f * (3. - 2. * f); return mix(mix(hs(i), hs(i + vec2(1., 0.)), u.x), mix(hs(i + vec2(0., 1.)), hs(i + vec2(1., 1.)), u.x), u.y); }
+    float fbm(vec2 p){ float s = 0., a = .5; for (int i = 0; i < 5; i++){ s += a * ns(p); p = p * 2.03 + 17.1; a *= .5; } return s; }
+    void main(){
+      vec3 d = normalize(vP); float h = clamp(d.y * 1.7 + 0.04, 0., 1.), s = max(dot(d, sun), 0.);
+      vec3 c = mix(bot, top, pow(h, 0.65)) + vec3(1., .93, .8) * (pow(s, 900.) * 1.6 + pow(s, 12.) * 0.18);
+      if (d.y > 0.){
+        vec2 q = d.xz / (d.y + 0.15) * 1.3;
+        float cl = smoothstep(0.5, 0.82, fbm(q)) * smoothstep(0.02, 0.3, d.y);
+        vec3 cc = mix(vec3(0.8, 0.85, 0.92), vec3(1., 0.985, 0.96), smoothstep(0.5, 0.85, fbm(q * 1.7 + 4.))) + vec3(1., .9, .75) * pow(s, 6.) * 0.3;
+        c = mix(c, cc, cl * 0.9);
+      }
+      gl_FragColor = vec4(c, 1.);
+    }`
 }));
 scene.add(sky);
-scene.add(new THREE.HemisphereLight(0xdcecff, 0x8797ad, 0.52));
-const sun = new THREE.DirectionalLight(0xfff3e2, 0.66);
+scene.add(new THREE.HemisphereLight(0xd6e6ff, 0x8a9ab3, 0.5));
+const sun = new THREE.DirectionalLight(0xffe9cf, 0.78);
 sun.castShadow = true; sun.shadow.mapSize.set(2048, 2048);
 Object.assign(sun.shadow.camera, { left: -32, right: 32, top: 32, bottom: -32, near: 1, far: 220 });
 sun.shadow.bias = -0.0006; sun.shadow.normalBias = 0.04;
 scene.add(sun, sun.target);
 
-// Montagnes lointaines
-const mountains = new THREE.Group();
-{
-  const mat = new THREE.MeshLambertMaterial({ vertexColors: true, fog: false });
-  const r = rng(42), rock = new THREE.Color(0x7d8ea6), snow = new THREE.Color(0xf4f8fc), haze = new THREE.Color(HORIZON), c = new THREE.Color();
-  for (let k = 0; k < 34; k++){
-    const ht = 180 + r() * 360, rad = 140 + r() * 180, ph = r() * 100;
-    const geo = new THREE.ConeGeometry(rad, ht, 36, 18);
-    const pos = geo.attributes.position;
-    for (let i = 0; i < pos.count; i++){
-      const x = pos.getX(i), y = pos.getY(i), z = pos.getZ(i), a = Math.atan2(z, x), t = (y + ht / 2) / ht;
-      const ridge = 1 + 0.28 * Math.sin(a * 3 + ph) + 0.14 * Math.sin(a * 7 + ph * 2 + t * 4) + 0.07 * Math.sin(a * 17 + t * 9);
-      pos.setXYZ(i, x * ridge, y + 0.08 * ht * Math.sin(a * 5 + ph) * t * (1 - t) * 4, z * ridge);
+// Panorama : chaîne de montagnes en anneau (bruit fractal à crêtes) : forêt en bas, roche dans les pentes raides,
+// neige ailleurs, voile bleuté qui augmente avec la distance
+const mountains = (() => {
+  const NA = 384, NR = 28, R0 = 900, R1 = 2000, pos = [], idx = [];
+  const hs = (x, y) => { const v = Math.sin(x * 127.1 + y * 311.7) * 43758.5453; return v - Math.floor(v); };
+  const vn = (x, y) => { const xi = Math.floor(x), yi = Math.floor(y), u = smooth(x - xi), v = smooth(y - yi), a = hs(xi, yi), b = hs(xi + 1, yi), c = hs(xi, yi + 1), d = hs(xi + 1, yi + 1); return a + (b - a) * u + (c - a) * v + (a - b - c + d) * u * v; };
+  const ridged = (x, y) => { let sum = 0, amp = 1, w = 1; for (let o = 0; o < 6; o++){ let k = 1 - Math.abs(vn(x, y) * 2 - 1); k *= k * w; w = clamp(k * 1.8, 0, 1); sum += k * amp; amp *= 0.5; x = x * 2.02 + 5.3; y = y * 2.02 + 1.7; } return sum; };
+  for (let j = 0; j < NR; j++){
+    const t = j / (NR - 1), r = R0 + (R1 - R0) * t;
+    for (let i = 0; i < NA; i++){
+      const a = i / NA * TAU, x = Math.cos(a) * r, z = Math.sin(a) * r;
+      pos.push(x, smooth(t / 0.3) * Math.max(0, ridged(x / 700, z / 700) * 440 - 100) * (0.75 + 0.5 * t), z);
     }
-    geo.computeVertexNormals();
-    const nor = geo.attributes.normal, col = new Float32Array(pos.count * 3);
-    for (let i = 0; i < pos.count; i++){
-      const t = (pos.getY(i) + ht / 2) / ht, snowy = nor.getY(i) > 0.66 - t * 0.3 && t > 0.3;
-      c.copy(snowy ? snow : rock).lerp(haze, 0.35 - t * 0.2); col.set([c.r, c.g, c.b], i * 3);
-    }
-    geo.setAttribute('color', new THREE.BufferAttribute(col, 3)); geo.translate(0, ht / 2, 0);
-    const m = new THREE.Mesh(geo, mat), a = k / 34 * TAU + r() * 0.1, d = 1150 + r() * 250;
-    m.position.set(Math.cos(a) * d, -r() * 60, Math.sin(a) * d); mountains.add(m);
   }
-  scene.add(mountains);
-}
+  for (let j = 0; j < NR - 1; j++) for (let i = 0; i < NA; i++){ const a = j * NA + i, b = j * NA + (i + 1) % NA; idx.push(a, b, a + NA, b, b + NA, a + NA); }
+  const geo = new THREE.BufferGeometry(); geo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3)); geo.setIndex(idx); geo.computeVertexNormals();
+  const nor = geo.attributes.normal, col = new Float32Array(pos.length), c = new THREE.Color();
+  const snow = new THREE.Color(0xf2f6fb), rock = new THREE.Color(0x5d6878), forest = new THREE.Color(0x2c3a36), haze = new THREE.Color(HORIZON);
+  for (let i = 0; i < pos.length / 3; i++){
+    const y = pos[i * 3 + 1], t = Math.floor(i / NA) / (NR - 1), ny = nor.getY(i), jit = hs(i * 0.37, 1.3) * 0.08;
+    c.copy(y < 90 + jit * 500 && ny > 0.55 ? forest : ny > 0.6 - Math.min(0.3, y / 1600) + jit ? snow : rock).lerp(haze, 0.28 + 0.42 * t);
+    col.set([c.r, c.g, c.b], i * 3);
+  }
+  geo.setAttribute('color', new THREE.BufferAttribute(col, 3));
+  const m = new THREE.Mesh(geo, new THREE.MeshLambertMaterial({ vertexColors: true, fog: false }));
+  scene.add(m); return m;
+})();
 
 // Relief fin de la neige : normal map procédurale qui se répète
-function snowNormalTex(){
+function snowNormalTex(stripes){
   const N = 256, h = new Float32Array(N * N), r = rng(7);
   for (const [cells, amp] of [[8, 1], [16, 0.55], [32, 0.3], [128, 0.25]]){
     const g = Array.from({ length: cells * cells }, r), sz = N / cells;
@@ -200,7 +225,7 @@ function snowNormalTex(){
       h[y * N + x] += amp * ((at(x0, y0) * (1 - sx) + at(x0 + 1, y0) * sx) * (1 - sy) + (at(x0, y0 + 1) * (1 - sx) + at(x0 + 1, y0 + 1) * sx) * sy);
     }
   }
-  for (let y = 0; y < N; y++) for (let x = 0; x < N; x++) h[y * N + x] += 0.09 * Math.sin(x / N * TAU * 48);
+  if (stripes) for (let y = 0; y < N; y++) for (let x = 0; x < N; x++) h[y * N + x] += 0.09 * Math.sin(x / N * TAU * 48);
   const c = document.createElement('canvas'); c.width = c.height = N; const ctx = c.getContext('2d'), img = ctx.createImageData(N, N);
   for (let y = 0; y < N; y++) for (let x = 0; x < N; x++){
     const dx = (h[y * N + (x + 1) % N] - h[y * N + (x + N - 1) % N]) * 6, dy = (h[((y + 1) % N) * N + x] - h[((y + N - 1) % N) * N + x]) * 6;
@@ -210,14 +235,36 @@ function snowNormalTex(){
   ctx.putImageData(img, 0, 0);
   const t = new THREE.CanvasTexture(c); t.wrapS = t.wrapT = THREE.RepeatWrapping; t.anisotropy = renderer.capabilities.getMaxAnisotropy(); return t;
 }
-const snowNormal = snowNormalTex();
+const snowNormal = snowNormalTex(true), powderNormal = snowNormalTex(false);
 const snowSurface = o => new THREE.MeshPhongMaterial(Object.assign({ normalMap: snowNormal, normalScale: new THREE.Vector2(0.7, 0.7), shininess: 55, specular: 0x3a414c }, o));
 
 // Maillage de neige qui suit le joueur
 const T_SIZE = 380, T_SEG = 152, CELL = T_SIZE / T_SEG;
 const tGeo = new THREE.PlaneGeometry(T_SIZE, T_SIZE, T_SEG, T_SEG); tGeo.rotateX(-PI / 2);
 tGeo.setAttribute('color', new THREE.BufferAttribute(new Float32Array(tGeo.attributes.position.count * 3), 3));
-const terrain = new THREE.Mesh(tGeo, snowSurface({ vertexColors: true }));
+const terrainMat = snowSurface({ vertexColors: true, normalMap: powderNormal });
+terrainMat.onBeforeCompile = sh => {
+  sh.vertexShader = sh.vertexShader.replace('#include <common>', '#include <common>\nvarying vec3 vW;')
+    .replace('#include <fog_vertex>', '#include <fog_vertex>\nvW = (modelMatrix * vec4(transformed, 1.0)).xyz;');
+  sh.fragmentShader = sh.fragmentShader.replace('#include <common>', `#include <common>
+    varying vec3 vW;
+    float hsh(vec2 p){ return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }`)
+    .replace('#include <normal_fragment_maps>', `#include <normal_fragment_maps>
+    { // stries de dameuse (pas de 15 cm, dans le sens de la pente), seulement sur la piste et estompées au loin
+      float cxz = 16.0 * sin(vW.z * 0.004) + 7.0 * sin(vW.z * 0.011 + 1.0);
+      float piste = clamp((26.0 - abs(vW.x - cxz)) / 8.0, 0.0, 1.0) * smoothstep(30.0, 8.0, length(vViewPosition));
+      normal = normalize(normal + (viewMatrix * vec4(cos(vW.x * 41.9) * 0.22 * piste, 0.0, 0.0, 0.0)).xyz);
+    }`)
+    .replace('#include <dithering_fragment>', `#include <dithering_fragment>
+    { // paillettes : de minuscules facettes de glace renvoient le soleil
+      vec2 cell = floor(vW.xz * 38.0);
+      vec3 V = normalize(vViewPosition), H = normalize(directionalLights[0].direction + V);
+      vec3 facet = normalize(normal + (viewMatrix * vec4(hsh(cell + 7.1) - 0.5, 0.0, hsh(cell + 3.7) - 0.5, 0.0)).xyz * 0.9);
+      float glint = step(0.986, hsh(cell)) * pow(max(dot(facet, H), 0.0), 60.0) * smoothstep(14.0, 3.0, length(vViewPosition));
+      gl_FragColor.rgb += glint * 1.6;
+    }`);
+};
+const terrain = new THREE.Mesh(tGeo, terrainMat);
 terrain.receiveShadow = true; terrain.frustumCulled = false; scene.add(terrain);
 let tcx = 1e9, tcz = 1e9;
 function rebuildTerrain(x, z){
@@ -264,6 +311,23 @@ rocks.castShadow = true; rocks.frustumCulled = false; scene.add(rocks);
 const snowMat = snowSurface({ color: 0xf1f6fb });
 const lipMat = new THREE.MeshLambertMaterial({ color: 0x2b6fe0 });
 const flagMat = new THREE.MeshLambertMaterial({ color: 0xff6a2b });
+const liftMat = new THREE.MeshLambertMaterial({ color: 0x5a6470 }), cableMat = new THREE.LineBasicMaterial({ color: 0x24282d });
+function liftMeshes(z0){
+  const g = new THREE.Group(), top = new V3();
+  for (let k = Math.ceil((z0 - 10) / LIFT_STEP); k * LIFT_STEP + 10 < z0 + CH; k++){
+    liftTop(k, top); const base = hNat(top.x, top.z) - 0.5, hP = top.y + 0.2 - base;
+    const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.22, 0.34, hP, 10), liftMat); pole.position.set(top.x, base + hP / 2, top.z);
+    const beam = new THREE.Mesh(new THREE.BoxGeometry(LIFT_W * 2 + 0.8, 0.32, 0.36), liftMat); beam.position.copy(top);
+    g.add(pole, beam);
+    for (const sd of [-1, 1]){
+      const sheave = new THREE.Mesh(new THREE.BoxGeometry(0.26, 0.26, 1.7), liftMat); sheave.position.set(top.x + sd * LIFT_W, top.y - 0.3, top.z); g.add(sheave);
+      const pts = []; for (let q = 0; q <= 14; q++) pts.push(cableAt(top.z + q / 14 * LIFT_STEP, sd, new V3()));
+      g.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints(pts), cableMat));
+    }
+  }
+  g.traverse(o => { if (o.isMesh) o.castShadow = true; });
+  return g;
+}
 const railMat = new THREE.MeshPhongMaterial({ color: 0xaeb8c3, specular: 0xffffff, shininess: 90 });
 const postMat = new THREE.MeshLambertMaterial({ color: 0x3a3f47 });
 
@@ -297,13 +361,16 @@ function railMesh(r){
 }
 
 function genChunk(i){
-  const r = rng(i * 7919 + 13), z0 = i * CH, c = { jumps: [], kicks: [], rails: [], obst: [], trees: [], rocks: [], meshes: [] };
+  const r = rng(i * 7919 + 13), z0 = i * CH, c = { jumps: [], kicks: [], rails: [], obst: [], trees: [], rocks: [], marks: [], meshes: [] };
   chunks.set(i, c);
   if (i >= 1){
     const t = r(), x = cx(z0 + 30);
     const J = t < 0.3 ? { L: 6, H: 1.4, W: 7, G: 9, Ll: 20, Dl: 2.2 } : t < 0.7 ? { L: 8, H: 2.3, W: 8, G: 14, Ll: 24, Dl: 3.5 } : { L: 10, H: 3.2, W: 9, G: 16, Ll: 28, Dl: 5.5 };
     const j = Object.assign({ x, z0: z0 + 6, Hd: J.H * 0.6, Lr: 18 }, J); j.end = j.L + j.G + j.Ll + j.Lr;
     c.jumps.push(j); c.kicks.push({ x, z0: j.z0, L: j.L, W: j.W, H: j.H });
+    for (let z = j.z0 + j.L - 2; z < j.z0 + j.L + j.G + j.Ll; z += 4) for (const sd of [-1, 1]){ // piquets rouges le long de la table et de la réception
+      const mx = x + sd * (j.W / 2 + 1.3); c.marks.push({ x: mx, y: hBase(mx, z) - 0.15, z, c: 0xd42a2a });
+    }
     if (r() < 0.55){
       const xr = x + (r() < 0.5 ? -1 : 1) * (J.W / 2 + 7), rz0 = z0 + 14, len = 12 + r() * 5;
       c.kicks.push({ x: xr, z0: rz0 - 7, L: 7, W: 2.6, H: 0.9 });
@@ -311,7 +378,10 @@ function genChunk(i){
       c.rails.push({ x: xr, z0: rz0, z1: rz0 + len, y0, y1, slope: (y1 - y0) / len, dir: new V3(0, y1 - y0, len).normalize() });
     }
   }
-  const clear = (x, z) => Math.abs(x - cx(z)) < 20;
+  const clear = (x, z) => Math.abs(x - cx(z)) < 20 || Math.abs(x - liftX(z)) < 7; // piste et couloir du télésiège sans arbres
+  for (let z = z0 + 3; z < z0 + CH; z += 22) for (const sd of [-1, 1]){ // balisage orange du bord de piste
+    const mx = cx(z) + sd * 23; c.marks.push({ x: mx, y: hBase(mx, z) - 0.15, z, c: 0xff7f1e });
+  }
   for (let k = 0; k < 120; k++){
     const z = z0 + r() * CH, x = cx(z) + (r() - 0.5) * 170, d = Math.abs(x - cx(z)), rr = r();
     if (rr > (d < 30 ? 0.25 : 0.85) || clear(x, z)) continue;
@@ -325,16 +395,22 @@ function genChunk(i){
   }
   for (const f of c.kicks) c.meshes.push(kickerMesh(f));
   for (const rl of c.rails) c.meshes.push(railMesh(rl));
+  c.meshes.push(liftMeshes(z0));
   for (const m of c.meshes) scene.add(m);
 }
-const M4 = new THREE.Matrix4(), Q = new THREE.Quaternion(), SC = new V3(), PO = new V3(), UP = new V3(0, 1, 0);
+const markGeo = new THREE.CylinderGeometry(0.035, 0.035, 1.6, 6); markGeo.translate(0, 0.8, 0);
+const marks = new THREE.InstancedMesh(markGeo, new THREE.MeshLambertMaterial(), 600);
+marks.castShadow = true; marks.frustumCulled = false; scene.add(marks);
+const M4 = new THREE.Matrix4(), Q = new THREE.Quaternion(), SC = new V3(), PO = new V3(), UP = new V3(0, 1, 0), MC = new THREE.Color();
 function refreshInstances(){
-  let nt = 0, nr = 0;
+  let nt = 0, nr = 0, nm = 0;
   for (const c of chunks.values()){
     for (const t of c.trees){ if (nt >= 2000) break; Q.setFromAxisAngle(UP, t.rot); M4.compose(PO.set(t.x, t.y, t.z), Q, SC.set(t.s, t.s * (0.9 + (t.rot % 0.3)), t.s)); trees.setMatrixAt(nt++, M4); }
     for (const t of c.rocks){ Q.setFromAxisAngle(UP, t.rot); M4.compose(PO.set(t.x, t.y, t.z), Q, SC.set(t.s * 1.3, t.s * 0.75, t.s)); rocks.setMatrixAt(nr++, M4); }
+    for (const m of c.marks){ if (nm >= 600) break; M4.makeTranslation(m.x, m.y, m.z); marks.setMatrixAt(nm, M4); marks.setColorAt(nm++, MC.setHex(m.c)); }
   }
-  trees.count = nt; rocks.count = nr; trees.instanceMatrix.needsUpdate = rocks.instanceMatrix.needsUpdate = true;
+  trees.count = nt; rocks.count = nr; marks.count = nm; trees.instanceMatrix.needsUpdate = rocks.instanceMatrix.needsUpdate = marks.instanceMatrix.needsUpdate = true;
+  if (marks.instanceColor) marks.instanceColor.needsUpdate = true;
 }
 function updateChunks(z){
   const ci = Math.floor(z / CH); let changed = false;
@@ -448,6 +524,46 @@ function makeSkier(){
   return P;
 }
 const SK = makeSkier(); scene.add(SK.root);
+
+/* ---------- Sièges du télésiège ---------- */
+function mergeBoxes(parts){ // [[w, h, d, x, y, z, couleur], ...] -> une géométrie avec couleurs par sommet
+  const P = [], N = [], C = [], c = new THREE.Color();
+  for (const [w, h, d, x, y, z, hex] of parts){
+    const g = new THREE.BoxGeometry(w, h, d).toNonIndexed(); g.translate(x, y, z); c.setHex(hex);
+    P.push(...g.attributes.position.array); N.push(...g.attributes.normal.array);
+    for (let i = 0; i < g.attributes.position.count; i++) C.push(c.r, c.g, c.b);
+  }
+  const out = new THREE.BufferGeometry();
+  out.setAttribute('position', new THREE.Float32BufferAttribute(P, 3)); out.setAttribute('normal', new THREE.Float32BufferAttribute(N, 3)); out.setAttribute('color', new THREE.Float32BufferAttribute(C, 3));
+  return out;
+}
+const CHAIR_SP = 18, CHAIRS = 64;
+const chairs = new THREE.InstancedMesh(mergeBoxes([[0.06, 2.1, 0.06, 0, -1.05, 0, 0x30353b], [1.6, 0.08, 0.5, 0, -2.15, 0.1, 0x30353b], [1.6, 0.55, 0.06, 0, -1.85, -0.17, 0x3d4650], [1.6, 0.04, 0.04, 0, -1.62, 0.45, 0x30353b], [0.04, 0.5, 0.04, 0.78, -1.87, 0.2, 0x30353b], [0.04, 0.5, 0.04, -0.78, -1.87, 0.2, 0x30353b]]),
+  new THREE.MeshLambertMaterial({ vertexColors: true }), CHAIRS);
+const riders = new THREE.InstancedMesh(mergeBoxes([[0.42, 0.55, 0.3, 0, -1.78, -0.02, 0xffffff], [0.24, 0.24, 0.24, 0, -1.35, 0.02, 0xffffff], [0.4, 0.16, 0.5, 0, -2.04, 0.3, 0x2a2e35], [0.38, 0.45, 0.14, 0, -2.3, 0.55, 0x2a2e35], [0.3, 0.06, 1.6, 0, -2.55, 0.65, 0x15171a]]),
+  new THREE.MeshLambertMaterial({ vertexColors: true }), CHAIRS);
+chairs.frustumCulled = riders.frustumCulled = false; chairs.castShadow = riders.castShadow = true; scene.add(chairs, riders);
+const RIDER_COL = [0xe94f37, 0x2d7dd2, 0xf2c14e, 0x3bb273, 0xffffff, 0x7d4e9f, 0x1b1e22];
+let liftT = 0;
+function updateLift(dt){
+  liftT += dt * 2.4; // 2,4 m/s
+  let nc = 0, nr = 0;
+  for (const sd of [-1, 1]){
+    const ph = (sd < 0 ? -liftT : liftT) % CHAIR_SP, first = Math.floor((S.p.z - 140) / CHAIR_SP);
+    Q.setFromAxisAngle(UP, sd < 0 ? PI : 0);
+    for (let i = first; i < first + CHAIRS / 2 && nc < CHAIRS; i++){
+      const z = i * CHAIR_SP + ph + (sd > 0 ? 7 : 0);
+      cableAt(z, sd, PO); M4.compose(PO, Q, SC.set(1, 1, 1)); chairs.setMatrixAt(nc++, M4);
+      const f = Math.floor(liftT / CHAIR_SP), seed = (((sd < 0 ? i + f : i - f) * 73856093) ^ (sd * 19349663)) >>> 0; // identité du siège : ses passagers restent dessus
+      if (seed % 3) for (const ox of seed % 2 ? [-0.4, 0.4] : [0.35]){
+        PO.x += ox * (sd < 0 ? -1 : 1); M4.compose(PO, Q, SC.set(1, 1, 1)); riders.setMatrixAt(nr, M4); riders.setColorAt(nr++, MC.setHex(RIDER_COL[(seed >> 3) % RIDER_COL.length])); PO.x -= ox * (sd < 0 ? -1 : 1);
+        if (nr >= CHAIRS) break;
+      }
+    }
+  }
+  chairs.count = nc; riders.count = nr; chairs.instanceMatrix.needsUpdate = riders.instanceMatrix.needsUpdate = true;
+  if (riders.instanceColor) riders.instanceColor.needsUpdate = true;
+}
 
 /* ---------- Particules, traces, neige ---------- */
 const dotTex = (() => { const c = document.createElement('canvas'); c.width = c.height = 64; const g = c.getContext('2d'); const gr = g.createRadialGradient(32, 32, 0, 32, 32, 32); gr.addColorStop(0, 'rgba(255,255,255,1)'); gr.addColorStop(0.5, 'rgba(255,255,255,.6)'); gr.addColorStop(1, 'rgba(255,255,255,0)'); g.fillStyle = gr; g.fillRect(0, 0, 64, 64); return new THREE.CanvasTexture(c); })();
@@ -671,22 +787,23 @@ function predictLanding(){
   }
   return 4;
 }
-function rotMomentum(key, a, w, inp, rate, unit, dt){
-  const A = S.air, T = Math.max(0.04, A.tLand);
-  if (T < 0.3) inp = 0; // trop tard pour lancer quoi que ce soit : on se prépare à toucher
-  const push = Math.abs(inp) > 0.25;
-  if (push) w += (inp * rate - w) * Math.min(1, (A.t < 0.35 ? 4.5 : 1.2) * dt);
-  if (push || A[key] === undefined) A[key] = Math.round((a + w * T) / unit) * unit;
-  const need = clamp((A[key] - a) / T, -rate * 1.6, rate * 1.6);
-  return w + (need - w) * Math.min(1, clamp(1.3 - T, 0, 1) * (push ? 0.3 : 1) * 7 * dt);
+function rotMomentum(key, a, w, inp, rate, unit, brake, dt){
+  // Stick tenu : le skieur lance puis entretient sa rotation. Stick lâché : il s'ouvre et "spotte" la neige, il freine
+  // (décélération limitée) pour se caler sur le 180° (ou le tour de flip) où il peut encore s'arrêter.
+  // Lâché trop tard, il n'a pas le temps de s'arrêter et touche la neige en tournant.
+  const A = S.air;
+  if (Math.abs(inp) > 0.25){ A[key] = null; return w + (inp * rate - w) * Math.min(1, (A.t < 0.35 ? 4.5 : 1.5) * dt); }
+  if (A[key] == null) A[key] = Math.round((a + w * Math.abs(w) / (2 * brake)) / unit) * unit;
+  const e = A[key] - a, want = Math.sign(e) * Math.min(rate * 1.2, Math.sqrt(2 * brake * Math.abs(e)));
+  return w + clamp(want - w, -brake * 1.6 * dt, brake * 1.6 * dt);
 }
 function stepAir(dt){
   const p = S.p, v = S.v, A = S.air;
   v.y -= 9.81 * dt; v.multiplyScalar(1 - 0.003 * v.length() * dt);
   A.t += dt; A.tLand -= dt;
   if (clock - A.pred > 0.05){ A.tLand = predictLanding(); A.pred = clock; }
-  S.spinV = rotMomentum('spinTo', S.spin, S.spinV, -input.steer, 7.5, PI, dt);
-  S.flipV = rotMomentum('flipTo', S.flip, S.flipV, -input.fwd, 5.6, TAU, dt);
+  S.spinV = rotMomentum('spinTo', S.spin, S.spinV, -input.steer, 7.5, PI, 14, dt);
+  S.flipV = rotMomentum('flipTo', S.flip, S.flipV, -input.fwd, 5.6, TAU, 10, dt);
   S.spin += S.spinV * dt; S.flip += S.flipV * dt;
   if (input.grab) S.air.grabs[input.grab] = (S.air.grabs[input.grab] || 0) + dt;
   S.air.maxSpin = Math.max(S.air.maxSpin || 0, Math.abs(S.spin - S.air.spin0));
@@ -772,12 +889,14 @@ function land(){
   const v = S.v, sp = Math.hypot(v.x, v.z), velYaw = Math.atan2(v.x, v.z), skiYaw = S.heading + S.spin;
   const d = wrap(skiYaw - velYaw), ad = Math.abs(d), sw = ad > PI / 2, err = sw ? PI - ad : ad;
   const fErr = Math.abs(wrap(S.flip)), impact = -v.dot(n), airT = clock - S.air.t0;
-  // Tolérant : on ne tombe que si c'est vraiment raté
+  // Chute au-delà d'environ 55° d'écart, réception "Limite" au-delà d'environ 25°, réception à plat sanctionnée
   if (n.y < 0.45) return crash('Réception sur le flanc');
-  if (fErr > 1.4) return crash('Atterri sur la tête');
-  if (sp > 3 && err > 1.25) return crash('Skis en travers');
-  if (impact > 22) return crash('Impact trop violent');
-  const sketchy = fErr > 0.6 || err > 0.6 || impact > 15;
+  if (fErr > 0.95 || Math.abs(S.flipV) > 4.5) return crash('Atterri sur la tête');
+  if (sp > 3 && err > 0.95) return crash('Skis en travers');
+  if (Math.abs(S.spinV) > 6) return crash('Encore en rotation');
+  if (impact > 14) return crash('Réception à plat');
+  const grabbing = input.grab && airT > 0.3;
+  const sketchy = fErr > 0.45 || err > 0.42 || impact > 9.5 || Math.abs(S.spinV) > 3.5 || grabbing;
   const dSpin = S.spin - S.air.spin0, flip = S.flip;
   const oldHeading = S.heading;
   S.heading = sp > 3 ? velYaw + (sw ? PI : 0) : skiYaw;
@@ -787,7 +906,8 @@ function land(){
   S.absorb = Math.min(1, impact / 6); if (springs.crouch) springs.crouch.v += Math.min(7, impact * 0.6);
   if (impact > 3){ burst(S.p, Math.min(40, impact * 3), 3); thump(impact / 25); }
   if (sketchy) S.absorb = 1;
-  evalAir(S.air, sketchy ? 'limite' : err < 0.25 && fErr < 0.3 && impact < 13, dSpin, flip, false);
+  if (sketchy && springs.roll){ springs.roll.v += (Math.random() < 0.5 ? -1 : 1) * 4; springs.lean.v -= 2.5; } // il rattrape son équilibre
+  evalAir(S.air, sketchy ? 'limite' : err < 0.15 && fErr < 0.2 && impact < 7.5, dSpin, flip, false);
 }
 function evalAir(r, perfect, dSpin, flip, intoRail){
   const airT = clock - r.t0, unit = r.fromRail ? 90 : 180;
@@ -1098,7 +1218,7 @@ function frame(t){
     updateCombo(dt); updateHud(); updateAudio();
   }
   updateChunks(S.p.z);
-  updateSkier(dt); updateParticles(dt); updateCamera(dt);
+  updateSkier(dt); updateParticles(dt); updateLift(dt); updateCamera(dt);
   renderer.render(scene, cam);
 }
 requestAnimationFrame(frame);
