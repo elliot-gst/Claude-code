@@ -514,7 +514,7 @@ function readInput(){
 
 /* ---------- Physique ---------- */
 const S = { p: new V3(), v: new V3(), heading: 0, state: 'ground', spin: 0, flip: 0, spinV: 0, flipV: 0, charge: 0, turn: 0, aLat: 0, skid: 0,
-  rail: null, air: null, grind: null, grindT: 0, crashT: 0, invuln: 0, absorb: 0, tumble: new THREE.Quaternion(), tAxis: new V3(), tW: 0, roll: 0 };
+  rail: null, air: null, grind: null, grindT: 0, crashT: 0, invuln: 0, absorb: 0, tumble: new THREE.Quaternion(), tAxis: new V3(), tW: 0, roll: 0, edge: 0, edgeV: 0, edgeSign: 0, plant: null, brakeSide: 0 };
 const n = new V3(), f = new V3(), lat = new V3();
 let clock = 0, score = 0, best = 0, combo = { list: [], pts: 0, t: 0 };
 try { best = +localStorage.getItem('poudreuse-best') || 0; } catch (e){}
@@ -527,7 +527,7 @@ function endButter(){
   const vy = Math.atan2(S.v.x, S.v.z), d = wrap(S.heading - vy); // on recale les skis dans la pente
   if (Math.abs(d) < 0.9) S.heading = vy; else if (Math.abs(d) > PI - 0.9) S.heading = vy + PI;
 }
-function takeoff(fromRail){ if (S.butter) endButter(); S.state = 'air'; S.spinV = 0; S.flipV = 0; S.flip = 0; S.air = { t0: clock, spin0: S.spin, grabs: {}, sw: isSwitch(), fromRail }; }
+function takeoff(fromRail){ if (S.butter) endButter(); S.spinV = fromRail ? 0 : S.turn * 0.5; S.state = 'air'; S.flipV = 0; S.flip = 0; S.air = { t0: clock, spin0: S.spin, grabs: {}, sw: isSwitch(), fromRail }; }
 function pop(){
   const c = S.charge;
   if (S.state === 'ground'){ normalAt(S.p.x, S.p.z, n); S.v.addScaledVector(n, 2.4 + 3.2 * c); S.p.addScaledVector(n, 0.05); takeoff(false); }
@@ -537,7 +537,7 @@ function pop(){
 function respawn(){
   const z = S.p.z + 4; S.p.set(cx(z), 0, z); S.p.y = ground(S.p.x, z, G).h;
   S.heading = Math.atan((cx(z + 1) - cx(z - 1)) / 2); S.v.set(Math.sin(S.heading) * 4, 0, Math.cos(S.heading) * 4);
-  Object.assign(S, { spin: 0, flip: 0, state: 'ground', invuln: 2, rail: null, absorb: 0 }); S.tumble.identity();
+  Object.assign(S, { spin: 0, flip: 0, state: 'ground', invuln: 2, rail: null, absorb: 0, edge: 0, edgeV: 0, butter: null }); S.tumble.identity();
   trLast[0] = trLast[1] = null;
 }
 function crash(reason){
@@ -568,22 +568,42 @@ function stepGround(dt){
   normalAt(p.x, p.z, n);
   v.x += 9.81 * n.y * n.x * dt; v.y += (-9.81 + 9.81 * n.y * n.y) * dt; v.z += 9.81 * n.y * n.z * dt; // gravité tangentielle
   const speed = v.length(), brake = input.fwd > 0.45, tuck = input.fwd < -0.45;
-  const wmax = Math.min(2.4, 26 / Math.max(speed, 1)); // ~2.5 g max en virage
   // Butter : GRAB tenu au sol = appui sur la spatule (ou le talon), le stick fait pivoter les skis
   const bt = !!input.grab && speed > 2;
   if (bt && !S.butter) S.butter = { type: input.fwd > 0.3 ? 'Tail' : 'Nose', t: 0, rot: 0 };
   if (!bt && S.butter) endButter();
-  if (S.butter){ const w = -input.steer * 4.5; S.butter.rot += w * dt; S.butter.t += dt; S.heading += w * dt; S.turn = 0; }
-  else S.turn += (-input.steer * wmax * (brake ? 0.6 : 1) - S.turn) * Math.min(1, dt * 7); // inertie de mise sur la carre
+  // Angle de carre : le skieur bascule progressivement sur ses carres (ressort amorti, jamais instantané)
+  const tgtEdge = S.butter || brake ? 0 : input.steer * 1.05;
+  S.edgeV += ((tgtEdge - S.edge) * 45 - S.edgeV * 12) * dt; S.edge += S.edgeV * dt;
+  const es = S.edge > 0.25 ? 1 : S.edge < -0.25 ? -1 : 0; // changement de carre = planter de bâton
+  if (es && es !== S.edgeSign && speed > 4) S.plant = { i: es > 0 ? 0 : 1, t: 0 };
+  if (es) S.edgeSign = es;
+  f.set(Math.sin(S.heading), 0, Math.cos(S.heading)); f.addScaledVector(n, -f.dot(n)).normalize();
+  const vf0 = v.dot(f), av = Math.abs(vf0), velYaw = Math.atan2(v.x, v.z), travel = velYaw + (vf0 < 0 ? PI : 0);
+  if (S.butter){ const w = -input.steer * 4.5; S.butter.rot += w * dt; S.butter.t += dt; S.turn = w; }
+  else if (brake && speed > 2){
+    // Dérapage : les skis pivotent en travers de la trajectoire et raclent la neige
+    if (!S.brakeSide) S.brakeSide = (input.steer || S.edge || 0.1) > 0 ? -1 : 1;
+    S.turn = clamp(wrap(travel + S.brakeSide * 1.25 - S.heading) * 6, -5, 5);
+  } else {
+    S.brakeSide = 0;
+    // Virage coupé : rayon = rayon de cotes / sin(carre), plafonné par l'accroche (~2.5 g)
+    const kappa = Math.sin(S.edge) / 11;
+    let w = -Math.sign(kappa) * Math.min(Math.abs(kappa) * av, 25 / Math.max(av, 1));
+    w -= input.steer * (0.35 + 1.4 * Math.max(0, 1 - av / 6)); // un peu de dérapage piloté, pivot à l'arrêt
+    const skid = wrap(S.heading - travel);
+    if (speed > 3 && Math.abs(skid) > 0.3) w -= skid * 3; // les skis se réalignent tout seuls sur la trajectoire
+    S.turn = w;
+  }
   S.heading += S.turn * dt;
   f.set(Math.sin(S.heading), 0, Math.cos(S.heading)); f.addScaledVector(n, -f.dot(n)).normalize();
   lat.crossVectors(n, f);
   let vf = v.dot(f), vl = v.dot(lat);
-  const vl2 = vl * Math.exp(-(S.butter ? 1.2 : brake ? 3 : 9) * dt); // accroche de la carre
+  const vl2 = vl * Math.exp(-(S.butter ? 1.2 : brake ? 2.5 : 10) * dt); // accroche de la carre
   S.skid = Math.abs(vl);
-  vf = Math.sign(vf || 1) * Math.sqrt(vf * vf + (S.butter ? 0 : brake ? 0.1 : 0.75) * (vl * vl - vl2 * vl2)); // carving : l'énergie latérale est redirigée
+  vf = Math.sign(vf || 1) * Math.sqrt(vf * vf + (S.butter || brake ? 0 : 0.75) * (vl * vl - vl2 * vl2)); // carving : l'énergie latérale est redirigée
   vl = vl2;
-  const mu = 0.045 + (brake ? 0.32 : 0), kd = tuck ? 0.0022 : brake ? 0.006 : 0.0042 - S.charge * 0.001; // frottement neige + traînée aéro (CdA/2m)
+  const mu = 0.045, kd = tuck ? 0.0022 : brake ? 0.006 : 0.0042 - S.charge * 0.001; // frottement neige + traînée aéro
   const dec = (mu * 9.81 * n.y + kd * vf * vf) * dt;
   vf = Math.abs(vf) <= dec ? 0 : vf - Math.sign(vf) * dec;
   v.copy(f).multiplyScalar(vf).addScaledVector(lat, vl);
@@ -663,7 +683,7 @@ function land(){
   S.heading = sp > 3 ? velYaw + (sw ? PI : 0) : skiYaw;
   S.spin = 0; S.flip = 0; S.state = 'ground';
   v.addScaledVector(n, -v.dot(n)).multiplyScalar(1 - Math.min(0.25, impact * 0.012) - (sketchy ? 0.2 : 0));
-  S.absorb = Math.min(1, impact / 9);
+  S.absorb = Math.min(1, impact / 9); if (springs.crouch) springs.crouch.v += Math.min(6, impact * 0.45);
   if (impact > 3){ burst(S.p, Math.min(40, impact * 3), 3); thump(impact / 25); }
   if (sketchy) S.absorb = 1;
   evalAir(S.air, sketchy ? 'limite' : err < 0.25 && fErr < 0.3 && impact < 13, dSpin, flip, false);
@@ -755,6 +775,12 @@ const GP = {
   Stalefish: { a0: [0.55, 0.35], e0: -0.2, a1: [-0.5, 1.0], sy: 0.2, sx: 0.25, lean: 0.5 },
   Blunt: { a1: [0.9, 0.15], e1: 0, a0: [-0.6, -1.0], sx: 0.35, lean: 0.35 }
 };
+// Ressort amorti : donne de l'inertie et un léger rebond aux mouvements du corps
+const springs = {};
+function spring(name, target, w, z, dt){
+  const sp = springs[name] || (springs[name] = { x: target, v: 0 });
+  sp.v += ((target - sp.x) * w * w - 2 * z * w * sp.v) * dt; sp.x += sp.v * dt; return sp.x;
+}
 function updateSkier(dt){
   const P = SK, k = 1 - Math.exp(-12 * dt);
   P.root.position.copy(S.p);
@@ -763,18 +789,27 @@ function updateSkier(dt){
   mB.makeBasis(lat, n, f); qT.setFromRotationMatrix(mB);
   P.root.quaternion.slerp(qT, 1 - Math.exp(-(S.state === 'ground' ? 18 : 6) * dt));
   const st = S.state, brake = st === 'ground' && input.fwd > 0.45, tuck = st === 'ground' && input.fwd < -0.45;
-  S.roll = lerp(S.roll, st === 'ground' ? clamp(-Math.atan2(S.aLat, 9.81), -1.1, 1.1) : 0, 1 - Math.exp(-8 * dt));
+  // Inclinaison du corps = équilibre centrifuge ; jambes et skis plus couchés que le buste (angulation)
+  S.roll = spring('roll', st === 'ground' ? clamp(-Math.atan2(S.aLat, 9.81) * 0.85, -0.85, 0.85) : 0, 9, 0.75, dt);
+  const edgeVis = spring('edge', st === 'ground' && !S.butter ? S.edge * 0.9 : 0, 14, 0.8, dt);
+  const legRoll = S.roll + (edgeVis - S.roll) * 0.3;
   pose.bt = lerp(pose.bt, st === 'ground' && S.butter ? (S.butter.type === 'Nose' ? 0.3 : -0.3) : 0, 1 - Math.exp(-10 * dt));
-  if (st === 'ground') P.pivot.quaternion.setFromAxisAngle(ZA, S.roll).multiply(qB.setFromAxisAngle(XA, pose.bt));
+  if (st === 'ground') P.pivot.quaternion.setFromAxisAngle(ZA, legRoll).multiply(qB.setFromAxisAngle(XA, pose.bt));
+  P.pivot.position.set(0, 0.9, 0); if (st === 'ground') P.pivot.position.applyQuaternion(P.pivot.quaternion); // au sol on bascule depuis les pieds, en l'air autour du centre de gravité
   else if (st === 'air') P.pivot.quaternion.setFromAxisAngle(XA, S.flip).multiply(qB.setFromAxisAngle(UP, S.spin));
   else if (st === 'rail') P.pivot.quaternion.setFromAxisAngle(UP, S.spin);
   else P.pivot.quaternion.copy(S.tumble);
   S.absorb *= Math.exp(-4 * dt);
   // Pose cible
   let crouch, lean, sh = [[-0.55, -0.28], [-0.55, 0.28]], el = [-0.7, -0.7], lift = 0, sy = 0, sx = 0;
-  if (st === 'ground'){ crouch = Math.max(S.charge * 0.9, tuck ? 0.8 : 0, S.absorb * 0.85, brake ? 0.15 : 0.1); lean = 0.25 + crouch * 0.5;
+  if (st === 'ground'){
+    // flexion : plus on tire de g dans le virage, plus on plie ; on se relève au changement de carre
+    crouch = Math.max(S.charge * 0.9, tuck ? 0.8 : 0, S.absorb * 0.85, brake ? 0.4 : 0.12 + Math.min(1, Math.abs(S.aLat) / 22) * 0.35);
+    lean = 0.22 + crouch * 0.5;
+    const r = S.roll; sh = [[-0.5 - r * 0.25, -0.34 - r * 0.15], [-0.5 + r * 0.25, 0.34 - r * 0.15]]; el = [-0.75, -0.75];
     if (tuck) sh = [[-1.25, -0.12], [-1.25, 0.12]], el = [-1.4, -1.4];
-    if (brake) sh = [[-0.4, -0.7], [-0.4, 0.7]];
+    if (brake) sh = [[-0.45, -0.75], [-0.45, 0.75]];
+    if (S.plant){ S.plant.t += dt; const ph = S.plant.t / 0.5; if (ph >= 1) S.plant = null; else if (!tuck){ sh[S.plant.i][0] = -1.05 + ph * 1.0; el[S.plant.i] = -0.55 + ph * 0.3; } }
   } else if (st === 'air'){
     const g = input.grab; crouch = g ? 1 : 0.4; lean = g ? 0.75 : 0.35; lift = 1; sh = [[-0.7, -0.6], [-0.7, 0.6]];
     sx = -0.12; sh[0][0] += Math.sin(clock * 3) * 0.15; sh[1][0] += Math.cos(clock * 3) * 0.15;
@@ -786,7 +821,7 @@ function updateSkier(dt){
     if (gp.a0) sh[0] = gp.a0; if (gp.a1) sh[1] = gp.a1; if (gp.e0 != null) el[0] = gp.e0; if (gp.e1 != null) el[1] = gp.e1;
     sx = (gp.sx || 0) * tw; sy = (gp.sy || 0) * tw; lean = gp.lean; crouch = st === 'air' ? 1 : 0.8;
   }
-  pose.crouch = lerp(pose.crouch, crouch, k); pose.lean = lerp(pose.lean, lean, k); pose.legLift = lerp(pose.legLift, lift, k);
+  pose.crouch = clamp(spring('crouch', crouch, 12, 0.5, dt), 0, 1.05); pose.lean = spring('lean', lean, 10, 0.7, dt); pose.legLift = lerp(pose.legLift, lift, k);
   const hh = 0.95 - pose.crouch * 0.4, th = Math.acos(clamp((hh - 0.1) / 0.94, 0, 1));
   P.body.position.y = -0.9 + pose.legLift * (0.95 - hh);
   for (let i = 0; i < 2; i++){
@@ -797,9 +832,10 @@ function updateSkier(dt){
   }
   P.torso.position.y = hh; P.torso.rotation.x = pose.lean - th * 0.5;
   pose.sy = lerp(pose.sy, sy, k); pose.sx = lerp(pose.sx, sx, k);
-  P.skis[0].rotation.set(pose.sx, pose.sy, 0); P.skis[1].rotation.set(pose.sx, -pose.sy, 0);
-  pose.tz = lerp(pose.tz, st === 'ground' ? -S.roll * 0.45 : 0, k); // angulation : le buste reste droit, les jambes se couchent
-  pose.ty = lerp(pose.ty, st === 'ground' ? input.steer * 0.7 * S.charge : 0, k); // pré-rotation avant un spin
+  const skiRoll = st === 'ground' ? edgeVis - legRoll : 0;
+  P.skis[0].rotation.set(pose.sx, pose.sy, skiRoll); P.skis[1].rotation.set(pose.sx, -pose.sy, skiRoll);
+  pose.tz = spring('tz', st === 'ground' ? -(legRoll - S.roll) - S.roll * 0.2 : 0, 10, 0.8, dt); // angulation : le buste reste plus droit que les jambes
+  pose.ty = spring('ty', st === 'ground' ? input.steer * 0.7 * S.charge : st === 'air' ? clamp(S.spinV * 0.05, -0.45, 0.45) : 0, 11, 0.7, dt); // pré-rotation, puis le buste mène le spin
   P.torso.rotation.z = pose.tz; P.torso.rotation.y = pose.ty;
   pose.hy = lerp(pose.hy, st === 'air' ? clamp(S.spinV * 0.07, -0.6, 0.6) : st === 'ground' ? S.turn * 0.2 - pose.ty * 0.8 : 0, k); // la tête mène la rotation
   P.head.rotation.set(-(pose.lean - th * 0.5) * 0.7, pose.hy, 0);
