@@ -77,7 +77,7 @@ canvas{position:fixed;inset:0;display:block}
       <dt>Stick gauche</dt><dd>Au sol : tourner. Haut = schuss (position de recherche), bas = freiner.<br>En l'air : gauche/droite = spin, haut = frontflip, bas = backflip. Spin + flip = Cork / Misty.</dd>
       <dt>Saut</dt><dd>Maintenir pour fléchir, relâcher pour ollie. Relâche au bord du kicker pour plus d'air.</dd>
       <dt>Grab</dt><dd>Maintenir GRAB en l'air. Stick neutre = Mute, droite = Safety, haut = Japan, bas = Tail.</dd>
-      <dt>Réception</dt><dd>Lâche le stick pour stopper la rotation : le skieur se cale sur le 180° suivant. Vise la pente de réception, pas la table.</dd>
+      <dt>Réception</dt><dd>Automatique : près de la neige, le skieur se cale tout seul. Une réception approximative passe (« Limite », moins de points), seule une vraie grosse erreur fait tomber.</dd>
     </dl>
     <p class="kb">Clavier : flèches / WASD, espace = saut, J K L I = grabs.</p>
     <button id="go">Lancer la descente</button>
@@ -569,8 +569,11 @@ function rotCtl(a, w, inp, rate, unit, dt){
 function stepAir(dt){
   const p = S.p, v = S.v;
   v.y -= 9.81 * dt; v.multiplyScalar(1 - 0.003 * v.length() * dt);
-  S.spinV = rotCtl(S.spin, S.spinV, -input.steer, 7.0, PI, dt);
-  S.flipV = rotCtl(S.flip, S.flipV, -input.fwd, 5.6, TAU, dt);
+  // Auto-réception : près de la neige, le skieur se cale tout seul sur le 180° le plus proche
+  ground(p.x, p.z, G);
+  const near = v.y < 0 && p.y - G.h < 1.4 + Math.max(0, -v.y) * 0.25;
+  S.spinV = rotCtl(S.spin, S.spinV, near ? 0 : -input.steer, 7.0, PI, dt);
+  S.flipV = rotCtl(S.flip, S.flipV, near ? 0 : -input.fwd, 5.6, TAU, dt);
   S.spin += S.spinV * dt; S.flip += S.flipV * dt;
   if (input.grab) S.air.grabs[input.grab] = (S.air.grabs[input.grab] || 0) + dt;
   p.addScaledVector(v, dt);
@@ -604,17 +607,20 @@ function land(){
   const v = S.v, sp = Math.hypot(v.x, v.z), velYaw = Math.atan2(v.x, v.z), skiYaw = S.heading + S.spin;
   const d = wrap(skiYaw - velYaw), ad = Math.abs(d), sw = ad > PI / 2, err = sw ? PI - ad : ad;
   const fErr = Math.abs(wrap(S.flip)), impact = -v.dot(n), airT = clock - S.air.t0;
-  if (n.y < 0.55) return crash('Réception sur le flanc');
-  if (fErr > 0.8) return crash('Mauvaise réception');
-  if (sp > 3 && err > 0.7) return crash('Skis en travers');
-  if (impact > 15) return crash('Impact trop violent');
+  // Tolérant : on ne tombe que si c'est vraiment raté
+  if (n.y < 0.45) return crash('Réception sur le flanc');
+  if (fErr > 1.4) return crash('Atterri sur la tête');
+  if (sp > 3 && err > 1.25) return crash('Skis en travers');
+  if (impact > 22) return crash('Impact trop violent');
+  const sketchy = fErr > 0.6 || err > 0.6 || impact > 15;
   const dSpin = S.spin - S.air.spin0, flip = S.flip;
   S.heading = sp > 3 ? velYaw + (sw ? PI : 0) : skiYaw;
   S.spin = 0; S.flip = 0; S.state = 'ground';
-  v.addScaledVector(n, -v.dot(n)).multiplyScalar(1 - Math.min(0.25, impact * 0.012));
+  v.addScaledVector(n, -v.dot(n)).multiplyScalar(1 - Math.min(0.25, impact * 0.012) - (sketchy ? 0.2 : 0));
   S.absorb = Math.min(1, impact / 9);
   if (impact > 3){ burst(S.p, Math.min(40, impact * 3), 3); thump(impact / 25); }
-  evalAir(S.air, err < 0.18 && fErr < 0.25 && impact < 11, dSpin, flip, false);
+  if (sketchy) S.absorb = 1;
+  evalAir(S.air, sketchy ? 'limite' : err < 0.25 && fErr < 0.3 && impact < 13, dSpin, flip, false);
 }
 function evalAir(r, perfect, dSpin, flip, intoRail){
   const airT = clock - r.t0, unit = r.fromRail ? 90 : 180;
@@ -623,7 +629,7 @@ function evalAir(r, perfect, dSpin, flip, intoRail){
   const grabs = Object.keys(r.grabs).filter(g => r.grabs[g] > 0.25);
   let name = '', pts = 0;
   if (flips > 0){
-    const pre = ['', '', 'Double ', 'Triple ', 'Quad '][flips] || flips + '× ';
+    const pre = flips < 5 ? ['', '', 'Double ', 'Triple ', 'Quad '][flips] : flips + '× ';
     name = deg >= 360 ? pre + (back ? 'Cork ' : 'Misty ') + deg : pre + (back ? 'Backflip' : 'Frontflip') + (deg ? ' ' + deg : '');
     pts += flips * 700 + (deg >= 360 ? 300 : 0);
   } else if (deg > 0) name = String(deg);
@@ -633,7 +639,8 @@ function evalAir(r, perfect, dSpin, flip, intoRail){
   if (grabs.length){ name += (name ? ' ' : '') + grabs.join(' + '); for (const g of grabs) pts += 200 + r.grabs[g] * 350; }
   if (airT > 0.9 && !intoRail){ if (!name) name = 'Big Air'; pts += airT * 120; }
   if (!name) return;
-  if (perfect){ name += ' · Parfait'; pts *= 1.25; }
+  if (perfect === true){ name += ' · Parfait'; pts *= 1.25; }
+  if (perfect === 'limite'){ name += ' · Limite'; pts *= 0.5; }
   addTrick(name, Math.round(pts / 10) * 10);
 }
 function collide(){
