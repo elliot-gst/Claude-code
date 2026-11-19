@@ -40,8 +40,8 @@ canvas{position:fixed;inset:0;display:block}
 #btns button:focus-visible{outline:2px solid var(--ice)}
 #jump{right:0;bottom:0;width:104px;height:104px;font-size:24px}
 #grab{right:112px;bottom:8px;width:76px;height:76px;font-size:18px}
-#start{position:fixed;inset:0;display:flex;align-items:center;justify-content:center;background:linear-gradient(180deg,rgba(11,22,38,.25),rgba(11,22,38,.82));padding:calc(20px + env(safe-area-inset-top,0px)) max(16px,env(safe-area-inset-right,0px)) calc(20px + env(safe-area-inset-bottom,0px)) max(16px,env(safe-area-inset-left,0px));overflow:auto;touch-action:pan-y}
-.card{max-width:560px;display:flex;flex-direction:column;gap:14px}
+#start{position:fixed;inset:0;display:flex;align-items:flex-start;justify-content:center;background:linear-gradient(180deg,rgba(11,22,38,.25),rgba(11,22,38,.82));padding:calc(20px + env(safe-area-inset-top,0px)) max(16px,env(safe-area-inset-right,0px)) calc(20px + env(safe-area-inset-bottom,0px)) max(16px,env(safe-area-inset-left,0px));overflow:auto;touch-action:pan-y}
+.card{max-width:560px;margin:auto;display:flex;flex-direction:column;gap:14px}
 .card h1{margin:0;font-family:var(--display);font-weight:800;font-size:clamp(56px,15vw,104px);line-height:.85;letter-spacing:-.01em;text-transform:uppercase}
 .card h1 em{font-style:normal;color:var(--glow)}
 .card p{margin:0;line-height:1.5;max-width:60ch;opacity:.92}
@@ -51,6 +51,11 @@ canvas{position:fixed;inset:0;display:block}
 #go{align-self:flex-start;border:0;border-radius:999px;padding:14px 30px;font-family:var(--display);font-weight:800;font-size:22px;letter-spacing:.06em;text-transform:uppercase;color:var(--ink);background:var(--glow);cursor:pointer}
 #go:focus-visible{outline:3px solid var(--ice);outline-offset:3px}
 .kb{font-size:12px;opacity:.7}
+body.menu #stats,body.menu #best,body.menu #btns,body.menu #stickZone{visibility:hidden}
+.amb{display:flex;gap:8px;flex-wrap:wrap}
+.amb button{border:1px solid var(--line);background:var(--glass);color:var(--snow);border-radius:999px;padding:8px 16px;font-family:var(--display);font-weight:600;font-size:15px;letter-spacing:.05em;text-transform:uppercase;cursor:pointer}
+.amb button.on{background:var(--snow);color:var(--ink)}
+.amb button:focus-visible{outline:2px solid var(--ice);outline-offset:2px}
 @media (prefers-reduced-motion:reduce){#trick.show,#msg.show{animation-duration:2.4s}}
 </style>
 
@@ -72,7 +77,9 @@ canvas{position:fixed;inset:0;display:block}
 <div id="start">
   <div class="card">
     <h1>Poudreuse<br><em>Freeride</em></h1>
-    <p>Snowpark infini : carve sur le damé, envoie sur les kickers, glisse sur les rails. Chaque figure posée s'ajoute au combo, une chute le perd.</p>
+    <p>Snowpark de nuit sous les projecteurs : lignes de kickers, big air et rails. Chaque figure posée s'ajoute au combo, une chute le perd.</p>
+    <div class="amb" role="group" aria-label="Ambiance"><button type="button" data-amb="night">Nuit · projecteurs</button><button type="button" data-amb="day">Jour</button></div>
+    <button id="go">Lancer la descente</button>
     <dl class="ctl">
       <dt>Stick gauche</dt><dd>Au sol : tourner. Haut = schuss (position de recherche), bas = freiner.<br>En l'air : gauche/droite lance le spin, haut le frontflip, bas le backflip ; la rotation garde son élan. Spin + flip = Cork / Rodeo / Misty.</dd>
       <dt>Saut</dt><dd>Maintenir pour fléchir, relâcher pour ollie. Relâche au bord du kicker pour plus d'air.</dd>
@@ -82,7 +89,6 @@ canvas{position:fixed;inset:0;display:block}
       <dt>Réception</dt><dd>Lâche le stick un peu avant de toucher : le skieur freine sa rotation et se cale sur le 180° (ou le tour) suivant. Lâché trop tard, il touche en tournant. Vise la pente de réception : trop vite, tu atterris à plat.</dd>
     </dl>
     <p class="kb">Clavier : flèches / WASD, espace = saut, J K L I = grabs.</p>
-    <button id="go">Lancer la descente</button>
   </div>
 </div>
 
@@ -96,13 +102,15 @@ const clamp = (x, a, b) => Math.max(a, Math.min(b, x));
 function rng(seed){ return () => { seed = seed + 0x6D2B79F5 | 0; let t = Math.imul(seed ^ seed >>> 15, 1 | seed); t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t; return ((t ^ t >>> 14) >>> 0) / 4294967296; }; }
 
 /* ---------- Terrain ---------- */
+const smooth = t => t <= 0 ? 0 : t >= 1 ? 1 : t * t * (3 - 2 * t);
 const cx = z => 16 * Math.sin(z * 0.004) + 7 * Math.sin(z * 0.011 + 1);
+// Tous les 4 tronçons la pente se cabre en un raidillon de 9 m : la réception du big air est posée dessus (pas creusée)
+function pitchDrop(z){ const w = z - 36 - 4 * 80, P = 4 * 80; if (w < 0) return 0; const k = Math.floor(w / P); return -9 * (k + smooth((w - k * P) / 50)); }
 function hNat(x, z){
   const side = Math.max(0, Math.abs(x - cx(z)) - 24);
-  return -0.27 * z + 0.6 * Math.sin(x * 0.05 + z * 0.02) + 0.25 * Math.sin(x * 0.17 + z * 0.11) + 0.015 * side * side;
+  return -0.27 * z + pitchDrop(z) + 0.6 * Math.sin(x * 0.05 + z * 0.02) + 0.25 * Math.sin(x * 0.17 + z * 0.11) + 0.015 * side * side;
 }
 const CH = 80, chunks = new Map();
-const smooth = t => t <= 0 ? 0 : t >= 1 ? 1 : t * t * (3 - 2 * t);
 // Saut de snowpark : kicker, table, knuckle arrondi, réception pentue, dégagement
 function jumpOffset(j, x, z){
   const d = z - j.z0; if (d < j.L * 0.5 || d > j.end) return 0;
@@ -112,8 +120,8 @@ function jumpOffset(j, x, z){
   return o * m;
 }
 function hBase(x, z){
-  let h = hNat(x, z); const c = chunks.get(Math.floor(z / CH));
-  if (c) for (const j of c.jumps) h += jumpOffset(j, x, z);
+  let h = hNat(x, z); const k = Math.floor(z / CH);
+  for (let q = k - 1; q <= k; q++){ const c = chunks.get(q); if (c) for (const j of c.jumps) h += jumpOffset(j, x, z); } // un big air déborde sur le tronçon suivant
   return h;
 }
 const G = { h: 0, gx: 0, gz: 0 };
@@ -160,26 +168,29 @@ addEventListener('resize', () => { renderer.setSize(innerWidth, innerHeight); ca
 const sunDir = new V3(-0.6, 0.45, 0.6).normalize();
 const sky = new THREE.Mesh(new THREE.SphereGeometry(1800, 24, 12), new THREE.ShaderMaterial({
   side: THREE.BackSide, depthWrite: false, fog: false,
-  uniforms: { top: { value: new THREE.Color(0x2c64a8) }, bot: { value: new THREE.Color(HORIZON) }, sun: { value: sunDir } },
+  uniforms: { top: { value: new THREE.Color(0x2c64a8) }, bot: { value: new THREE.Color(HORIZON) }, sun: { value: sunDir }, sunI: { value: 1 }, stars: { value: 0 }, cloudC: { value: new THREE.Color(0xffffff) } },
   vertexShader: 'varying vec3 vP; void main(){ vP = normalize(position); gl_Position = projectionMatrix * modelViewMatrix * vec4(position,1.); }',
-  fragmentShader: `uniform vec3 top; uniform vec3 bot; uniform vec3 sun; varying vec3 vP;
+  fragmentShader: `uniform vec3 top; uniform vec3 bot; uniform vec3 sun; uniform float sunI; uniform float stars; uniform vec3 cloudC; varying vec3 vP;
     float hs(vec2 p){ return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
     float ns(vec2 p){ vec2 i = floor(p), f = fract(p), u = f * f * (3. - 2. * f); return mix(mix(hs(i), hs(i + vec2(1., 0.)), u.x), mix(hs(i + vec2(0., 1.)), hs(i + vec2(1., 1.)), u.x), u.y); }
     float fbm(vec2 p){ float s = 0., a = .5; for (int i = 0; i < 5; i++){ s += a * ns(p); p = p * 2.03 + 17.1; a *= .5; } return s; }
     void main(){
       vec3 d = normalize(vP); float h = clamp(d.y * 1.7 + 0.04, 0., 1.), s = max(dot(d, sun), 0.);
-      vec3 c = mix(bot, top, pow(h, 0.65)) + vec3(1., .93, .8) * (pow(s, 900.) * 1.6 + pow(s, 12.) * 0.18);
+      vec3 c = mix(bot, top, pow(h, 0.65)) + vec3(1., .93, .8) * (pow(s, 900.) * 1.6 + pow(s, 12.) * 0.18) * sunI;
+      c += vec3(0.85, 0.9, 1.) * (smoothstep(0.99955, 0.9997, s) * 1.2 + pow(s, 60.) * 0.12) * stars; // lune
       if (d.y > 0.){
+        vec3 g = floor(d * 380.);
+        c += step(0.9982, hs(g.xy + g.z * 7.13)) * (0.5 + 0.5 * hs(g.zy)) * stars * smoothstep(0.03, 0.25, d.y) * 0.9; // étoiles
         vec2 q = d.xz / (d.y + 0.15) * 1.3;
         float cl = smoothstep(0.5, 0.82, fbm(q)) * smoothstep(0.02, 0.3, d.y);
-        vec3 cc = mix(vec3(0.8, 0.85, 0.92), vec3(1., 0.985, 0.96), smoothstep(0.5, 0.85, fbm(q * 1.7 + 4.))) + vec3(1., .9, .75) * pow(s, 6.) * 0.3;
-        c = mix(c, cc, cl * 0.9);
+        vec3 cc = mix(vec3(0.8, 0.85, 0.92), vec3(1., 0.985, 0.96), smoothstep(0.5, 0.85, fbm(q * 1.7 + 4.))) * cloudC + vec3(1., .9, .75) * pow(s, 6.) * 0.3 * sunI;
+        c = mix(c, cc, cl * (0.9 - stars * 0.35));
       }
       gl_FragColor = vec4(c, 1.);
     }`
 }));
 scene.add(sky);
-scene.add(new THREE.HemisphereLight(0xd6e6ff, 0x8a9ab3, 0.5));
+const hemi = new THREE.HemisphereLight(0xd6e6ff, 0x8a9ab3, 0.5); scene.add(hemi);
 const sun = new THREE.DirectionalLight(0xffe9cf, 0.78);
 sun.castShadow = true; sun.shadow.mapSize.set(2048, 2048);
 Object.assign(sun.shadow.camera, { left: -32, right: 32, top: 32, bottom: -32, near: 1, far: 220 });
@@ -211,9 +222,11 @@ const mountains = (() => {
   }
   geo.setAttribute('color', new THREE.BufferAttribute(col, 3));
   const m = new THREE.Mesh(geo, new THREE.MeshLambertMaterial({ vertexColors: true, fog: false }));
+  m.userData.day = m.material; m.userData.night = new THREE.MeshBasicMaterial({ vertexColors: true, fog: false }); // de nuit : silhouettes sombres
   scene.add(m); return m;
 })();
 
+const dotTex = (() => { const c = document.createElement('canvas'); c.width = c.height = 64; const g = c.getContext('2d'); const gr = g.createRadialGradient(32, 32, 0, 32, 32, 32); gr.addColorStop(0, 'rgba(255,255,255,1)'); gr.addColorStop(0.5, 'rgba(255,255,255,.6)'); gr.addColorStop(1, 'rgba(255,255,255,0)'); g.fillStyle = gr; g.fillRect(0, 0, 64, 64); return new THREE.CanvasTexture(c); })();
 // Relief fin de la neige : normal map procédurale qui se répète
 function snowNormalTex(stripes){
   const N = 256, h = new Float32Array(N * N), r = rng(7);
@@ -243,27 +256,38 @@ const T_SIZE = 380, T_SEG = 152, CELL = T_SIZE / T_SEG;
 const tGeo = new THREE.PlaneGeometry(T_SIZE, T_SIZE, T_SEG, T_SEG); tGeo.rotateX(-PI / 2);
 tGeo.setAttribute('color', new THREE.BufferAttribute(new Float32Array(tGeo.attributes.position.count * 3), 3));
 const terrainMat = snowSurface({ vertexColors: true, normalMap: powderNormal });
-terrainMat.onBeforeCompile = sh => {
+// Projecteurs : les 8 plus proches du skieur éclairent la neige (lumière qui décroît avec la distance)
+const FLOOD = { uLamps: { value: Array.from({ length: 8 }, () => new V3(0, -1e5, 0)) }, uFlood: { value: 0 } };
+function snowShader(sh, piste){
+  Object.assign(sh.uniforms, FLOOD);
   sh.vertexShader = sh.vertexShader.replace('#include <common>', '#include <common>\nvarying vec3 vW;')
     .replace('#include <fog_vertex>', '#include <fog_vertex>\nvW = (modelMatrix * vec4(transformed, 1.0)).xyz;');
   sh.fragmentShader = sh.fragmentShader.replace('#include <common>', `#include <common>
-    varying vec3 vW;
+    varying vec3 vW; uniform vec3 uLamps[8]; uniform float uFlood;
     float hsh(vec2 p){ return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }`)
-    .replace('#include <normal_fragment_maps>', `#include <normal_fragment_maps>
+    .replace('#include <lights_fragment_end>', `#include <lights_fragment_end>
+    if (uFlood > 0.0){
+      vec3 fl = vec3(0.0);
+      for (int i = 0; i < 8; i++){ vec3 Lw = uLamps[i] - vW; fl += max(dot(normal, normalize((viewMatrix * vec4(Lw, 0.0)).xyz)), 0.0) / (1.0 + dot(Lw, Lw) / 150.0); }
+      reflectedLight.directDiffuse += fl * uFlood * vec3(1.0, 0.93, 0.82) * 1.9 * diffuseColor.rgb;
+    }`);
+  if (!piste) return;
+  sh.fragmentShader = sh.fragmentShader.replace('#include <normal_fragment_maps>', `#include <normal_fragment_maps>
     { // stries de dameuse (pas de 15 cm, dans le sens de la pente), seulement sur la piste et estompées au loin
       float cxz = 16.0 * sin(vW.z * 0.004) + 7.0 * sin(vW.z * 0.011 + 1.0);
-      float piste = clamp((26.0 - abs(vW.x - cxz)) / 8.0, 0.0, 1.0) * smoothstep(30.0, 8.0, length(vViewPosition));
-      normal = normalize(normal + (viewMatrix * vec4(cos(vW.x * 41.9) * 0.22 * piste, 0.0, 0.0, 0.0)).xyz);
+      float pst = clamp((26.0 - abs(vW.x - cxz)) / 8.0, 0.0, 1.0) * smoothstep(30.0, 8.0, length(vViewPosition));
+      normal = normalize(normal + (viewMatrix * vec4(cos(vW.x * 41.9) * 0.22 * pst, 0.0, 0.0, 0.0)).xyz);
     }`)
     .replace('#include <dithering_fragment>', `#include <dithering_fragment>
-    { // paillettes : de minuscules facettes de glace renvoient le soleil
+    { // paillettes : de minuscules facettes de glace renvoient la lumière
       vec2 cell = floor(vW.xz * 38.0);
       vec3 V = normalize(vViewPosition), H = normalize(directionalLights[0].direction + V);
       vec3 facet = normalize(normal + (viewMatrix * vec4(hsh(cell + 7.1) - 0.5, 0.0, hsh(cell + 3.7) - 0.5, 0.0)).xyz * 0.9);
       float glint = step(0.986, hsh(cell)) * pow(max(dot(facet, H), 0.0), 60.0) * smoothstep(14.0, 3.0, length(vViewPosition));
-      gl_FragColor.rgb += glint * 1.6;
+      gl_FragColor.rgb += glint * 2.0 * dot(directionalLights[0].color, vec3(0.333));
     }`);
-};
+}
+terrainMat.onBeforeCompile = sh => snowShader(sh, true);
 const terrain = new THREE.Mesh(tGeo, terrainMat);
 terrain.receiveShadow = true; terrain.frustumCulled = false; scene.add(terrain);
 let tcx = 1e9, tcz = 1e9;
@@ -308,7 +332,7 @@ for (let i = 0; i < 2000; i++){ const v = rng(i + 99)(); trees.setColorAt(i, tin
 const rocks = new THREE.InstancedMesh(new THREE.DodecahedronGeometry(1, 0), new THREE.MeshLambertMaterial({ color: 0x5b626c, flatShading: true }), 400);
 rocks.castShadow = true; rocks.frustumCulled = false; scene.add(rocks);
 
-const snowMat = snowSurface({ color: 0xf1f6fb });
+const snowMat = snowSurface({ color: 0xf1f6fb }); snowMat.onBeforeCompile = sh => snowShader(sh, false);
 const lipMat = new THREE.MeshLambertMaterial({ color: 0x2b6fe0 });
 const flagMat = new THREE.MeshLambertMaterial({ color: 0xff6a2b });
 const liftMat = new THREE.MeshLambertMaterial({ color: 0x5a6470 }), cableMat = new THREE.LineBasicMaterial({ color: 0x24282d });
@@ -361,22 +385,31 @@ function railMesh(r){
 }
 
 function genChunk(i){
-  const r = rng(i * 7919 + 13), z0 = i * CH, c = { jumps: [], kicks: [], rails: [], obst: [], trees: [], rocks: [], marks: [], meshes: [] };
+  const r = rng(i * 7919 + 13), z0 = i * CH, c = { jumps: [], kicks: [], rails: [], obst: [], trees: [], rocks: [], marks: [], towers: [], meshes: [] };
   chunks.set(i, c);
-  if (i >= 1){
-    const t = r(), x = cx(z0 + 30);
-    const J = t < 0.3 ? { L: 6, H: 1.4, W: 7, G: 9, Ll: 20, Dl: 2.2 } : t < 0.7 ? { L: 8, H: 2.3, W: 8, G: 14, Ll: 24, Dl: 3.5 } : { L: 10, H: 3.2, W: 9, G: 16, Ll: 28, Dl: 5.5 };
-    const j = Object.assign({ x, z0: z0 + 6, Hd: J.H * 0.6, Lr: 18 }, J); j.end = j.L + j.G + j.Ll + j.Lr;
+  const addRail = (xr, rz0, len) => {
+    c.kicks.push({ x: xr, z0: rz0 - 7, L: 7, W: 2.6, H: 0.9 });
+    const y0 = hBase(xr, rz0) + 0.9, y1 = hBase(xr, rz0 + len) + 0.9;
+    c.rails.push({ x: xr, z0: rz0, z1: rz0 + len, y0, y1, slope: (y1 - y0) / len, dir: new V3(0, y1 - y0, len).normalize() });
+  };
+  // cycle de 4 tronçons : ligne de kicker, piste d'élan, big air (sa réception déborde sur le tronçon suivant), zone de rails
+  const kind = i < 1 ? 'start' : i < 4 ? (i === 3 ? 'inrun' : 'line') : ['big', 'jib', 'line', 'inrun'][i % 4];
+  if (kind === 'jib') for (const off of [-4, 4]) addRail(cx(z0 + 55) + off, z0 + 48 + (off > 0 ? 6 : 0), 14 + r() * 4);
+  if (kind === 'inrun') addRail(cx(z0 + 30) + (r() < 0.5 ? -12 : 12), z0 + 22, 14 + r() * 4); // l'axe reste libre pour prendre de la vitesse
+  if (kind === 'line' || kind === 'big'){
+    const t = r(), x = cx(z0 + (kind === 'big' ? 40 : 30));
+    const J = kind === 'big' ? { L: 12, H: 4.6, W: 11, G: 20, Ll: 40, Dl: 2, Lr: 20 }
+      : t < 0.3 ? { L: 6, H: 1.4, W: 7, G: 9, Ll: 20, Dl: 2.2, Lr: 18 } : t < 0.7 ? { L: 8, H: 2.3, W: 8, G: 14, Ll: 24, Dl: 3.5, Lr: 18 } : { L: 10, H: 3.2, W: 9, G: 16, Ll: 28, Dl: 5.5, Lr: 18 };
+    const j = Object.assign({ x, z0: z0 + 6, Hd: J.H * 0.6, big: kind === 'big' }, J); j.end = j.L + j.G + j.Ll + j.Lr;
     c.jumps.push(j); c.kicks.push({ x, z0: j.z0, L: j.L, W: j.W, H: j.H });
     for (let z = j.z0 + j.L - 2; z < j.z0 + j.L + j.G + j.Ll; z += 4) for (const sd of [-1, 1]){ // piquets rouges le long de la table et de la réception
       const mx = x + sd * (j.W / 2 + 1.3); c.marks.push({ x: mx, y: hBase(mx, z) - 0.15, z, c: 0xd42a2a });
     }
-    if (r() < 0.55){
-      const xr = x + (r() < 0.5 ? -1 : 1) * (J.W / 2 + 7), rz0 = z0 + 14, len = 12 + r() * 5;
-      c.kicks.push({ x: xr, z0: rz0 - 7, L: 7, W: 2.6, H: 0.9 });
-      const y0 = hBase(xr, rz0) + 0.9, y1 = hBase(xr, rz0 + len) + 0.9;
-      c.rails.push({ x: xr, z0: rz0, z1: rz0 + len, y0, y1, slope: (y1 - y0) / len, dir: new V3(0, y1 - y0, len).normalize() });
-    }
+    if (kind === 'line' && r() < 0.55) addRail(x + (r() < 0.5 ? -1 : 1) * (J.W / 2 + 7), z0 + 14, 12 + r() * 5);
+  }
+  for (let z = z0 + 20; z < z0 + CH; z += 40){ // pylônes d'éclairage, en quinconce au bord de la piste
+    const sd = Math.abs(Math.floor(z / 40)) % 2 ? 1 : -1, x = cx(z) + sd * 19, y = hBase(x, z);
+    c.towers.push({ x, y, z, sd }); c.obst.push({ x, z, r: 0.45, top: y + 16 });
   }
   const clear = (x, z) => Math.abs(x - cx(z)) < 20 || Math.abs(x - liftX(z)) < 7; // piste et couloir du télésiège sans arbres
   for (let z = z0 + 3; z < z0 + CH; z += 22) for (const sd of [-1, 1]){ // balisage orange du bord de piste
@@ -401,16 +434,34 @@ function genChunk(i){
 const markGeo = new THREE.CylinderGeometry(0.035, 0.035, 1.6, 6); markGeo.translate(0, 0.8, 0);
 const marks = new THREE.InstancedMesh(markGeo, new THREE.MeshLambertMaterial(), 600);
 marks.castShadow = true; marks.frustumCulled = false; scene.add(marks);
-const M4 = new THREE.Matrix4(), Q = new THREE.Quaternion(), SC = new V3(), PO = new V3(), UP = new V3(0, 1, 0), MC = new THREE.Color();
+const M4 = new THREE.Matrix4(), Q = new THREE.Quaternion(), SC = new V3(), PO = new V3(), UP = new V3(0, 1, 0), MC = new THREE.Color(), EU = new THREE.Euler();
+const NT = 48, poleGeo = new THREE.CylinderGeometry(0.2, 0.3, 16, 8); poleGeo.translate(0, 8, 0);
+const tPoles = new THREE.InstancedMesh(poleGeo, liftMat, NT), tHeads = new THREE.InstancedMesh(new THREE.BoxGeometry(2.8, 1.2, 0.45), liftMat, NT);
+const lampFaces = new THREE.InstancedMesh(new THREE.PlaneGeometry(2.5, 0.9), new THREE.MeshBasicMaterial({ color: 0xfff2d6 }), NT);
+const glowGeo = new THREE.BufferGeometry(); glowGeo.setAttribute('position', new THREE.BufferAttribute(new Float32Array(NT * 3), 3));
+const lampGlow = new THREE.Points(glowGeo, new THREE.PointsMaterial({ map: dotTex, color: 0xffe7c0, size: 14, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending }));
+for (const o of [tPoles, tHeads, lampFaces, lampGlow]){ o.frustumCulled = false; scene.add(o); }
+tPoles.castShadow = tHeads.castShadow = true;
+const lampList = [];
 function refreshInstances(){
-  let nt = 0, nr = 0, nm = 0;
+  let nt = 0, nr = 0, nm = 0, nk = 0; lampList.length = 0;
   for (const c of chunks.values()){
     for (const t of c.trees){ if (nt >= 2000) break; Q.setFromAxisAngle(UP, t.rot); M4.compose(PO.set(t.x, t.y, t.z), Q, SC.set(t.s, t.s * (0.9 + (t.rot % 0.3)), t.s)); trees.setMatrixAt(nt++, M4); }
     for (const t of c.rocks){ Q.setFromAxisAngle(UP, t.rot); M4.compose(PO.set(t.x, t.y, t.z), Q, SC.set(t.s * 1.3, t.s * 0.75, t.s)); rocks.setMatrixAt(nr++, M4); }
     for (const m of c.marks){ if (nm >= 600) break; M4.makeTranslation(m.x, m.y, m.z); marks.setMatrixAt(nm, M4); marks.setColorAt(nm++, MC.setHex(m.c)); }
+    for (const t of c.towers){
+      if (nk >= NT) break; const yaw = t.sd > 0 ? -PI / 2 : PI / 2;
+      M4.makeTranslation(t.x, t.y - 0.4, t.z); tPoles.setMatrixAt(nk, M4);
+      Q.setFromAxisAngle(UP, yaw); M4.compose(PO.set(t.x, t.y + 15.6, t.z), Q, SC.set(1, 1, 1)); tHeads.setMatrixAt(nk, M4);
+      Q.setFromEuler(EU.set(0.5, yaw, 0, 'YXZ')); M4.compose(PO.set(t.x - t.sd * 0.27, t.y + 15.5, t.z), Q, SC); lampFaces.setMatrixAt(nk, M4);
+      glowGeo.attributes.position.setXYZ(nk++, t.x - t.sd * 0.6, t.y + 15.4, t.z);
+      lampList.push(new V3(t.x - t.sd * 0.6, t.y + 15.2, t.z));
+    }
   }
   trees.count = nt; rocks.count = nr; marks.count = nm; trees.instanceMatrix.needsUpdate = rocks.instanceMatrix.needsUpdate = marks.instanceMatrix.needsUpdate = true;
   if (marks.instanceColor) marks.instanceColor.needsUpdate = true;
+  tPoles.count = tHeads.count = lampFaces.count = nk; tPoles.instanceMatrix.needsUpdate = tHeads.instanceMatrix.needsUpdate = lampFaces.instanceMatrix.needsUpdate = true;
+  glowGeo.setDrawRange(0, nk); glowGeo.attributes.position.needsUpdate = true;
 }
 function updateChunks(z){
   const ci = Math.floor(z / CH); let changed = false;
@@ -566,7 +617,6 @@ function updateLift(dt){
 }
 
 /* ---------- Particules, traces, neige ---------- */
-const dotTex = (() => { const c = document.createElement('canvas'); c.width = c.height = 64; const g = c.getContext('2d'); const gr = g.createRadialGradient(32, 32, 0, 32, 32, 32); gr.addColorStop(0, 'rgba(255,255,255,1)'); gr.addColorStop(0.5, 'rgba(255,255,255,.6)'); gr.addColorStop(1, 'rgba(255,255,255,0)'); g.fillStyle = gr; g.fillRect(0, 0, 64, 64); return new THREE.CanvasTexture(c); })();
 const NP = 600, pPos = new Float32Array(NP * 3).fill(-1e5), pVel = new Float32Array(NP * 3), pLife = new Float32Array(NP);
 const pGeo = new THREE.BufferGeometry(); pGeo.setAttribute('position', new THREE.BufferAttribute(pPos, 3));
 const spray = new THREE.Points(pGeo, new THREE.PointsMaterial({ map: dotTex, color: 0xffffff, size: 0.32, transparent: true, opacity: 0.9, depthWrite: false }));
@@ -1170,20 +1220,46 @@ function ragPose(dt){
     swingPole(i, _w.subVectors(X[5 + o], X[4 + o]).normalize(), dt);
   }
 }
+const AMBS = {
+  night: { top: 0x050b1c, bot: 0x223156, sun: new V3(-0.35, 0.38, 0.86).normalize(), sunI: 0, stars: 1, cloud: 0x18213a, fog: 0x121a30, fogN: 30, fogF: 240, hs: 0x44588a, hg: 0x0b0f17, hi: 0.62, exp: 1.25, flood: 1, mount: 0x262f4a, lamp: 0xfff2d6 },
+  day: { top: 0x2c64a8, bot: HORIZON, sun: sunDir, sunI: 1, stars: 0, cloud: 0xffffff, fog: HORIZON, fogN: 70, fogF: 330, hs: 0xd6e6ff, hg: 0x8a9ab3, hi: 0.5, exp: 1.5, flood: 0, mount: 0, lamp: 0x6b7078 }
+};
+let AMB = AMBS.night;
+function applyAmb(name){
+  AMB = AMBS[name] || AMBS.night; const u = sky.material.uniforms;
+  u.top.value.setHex(AMB.top); u.bot.value.setHex(AMB.bot); u.sun.value = AMB.sun; u.sunI.value = AMB.sunI; u.stars.value = AMB.stars; u.cloudC.value.setHex(AMB.cloud);
+  scene.fog.color.setHex(AMB.fog); scene.fog.near = AMB.fogN; scene.fog.far = AMB.fogF;
+  hemi.color.setHex(AMB.hs); hemi.groundColor.setHex(AMB.hg); hemi.intensity = AMB.hi;
+  renderer.toneMappingExposure = AMB.exp; FLOOD.uFlood.value = AMB.flood;
+  mountains.material = AMB.mount ? mountains.userData.night : mountains.userData.day; if (AMB.mount) mountains.userData.night.color.setHex(AMB.mount);
+  lampFaces.material.color.setHex(AMB.lamp); lampGlow.visible = !!AMB.flood;
+  sun.color.setHex(AMB.flood ? 0xfff1dc : 0xffe9cf); if (!AMB.flood) sun.intensity = 0.78;
+  try { localStorage.setItem('poudreuse-amb', AMB === AMBS.day ? 'day' : 'night'); } catch (e){}
+}
+// De nuit, la lumière qui porte l'ombre du skieur vient des projecteurs les plus proches (elle tourne quand il passe dessous)
+const FAR = new V3(0, -1e5, 0), _fl = new V3(), _fd = new V3();
+function floodLight(){
+  lampList.sort((a, b) => a.distanceToSquared(S.p) - b.distanceToSquared(S.p));
+  const U = FLOOD.uLamps.value; for (let i = 0; i < 8; i++) U[i].copy(lampList[i] || FAR);
+  _fd.set(0, 0, 0); let w = 0;
+  for (let i = 0; i < Math.min(3, lampList.length); i++){ _fl.subVectors(lampList[i], S.p); const k = 1 / (1 + _fl.lengthSq() / 150); _fd.addScaledVector(_fl.normalize(), k); w += k; }
+  if (w > 0){ sun.position.copy(S.p).addScaledVector(_fd.normalize(), 60); sun.intensity = Math.min(1.5, w * 1.7); }
+}
 function updateCamera(dt){
   const v = S.v, sp = Math.hypot(v.x, v.z);
   if (sp > 1.5 && S.state !== 'crash') camYaw += wrap(Math.atan2(v.x, v.z) - camYaw) * (1 - Math.exp(-3 * dt));
-  const back = 3.9 + Math.min(sp, 35) * 0.045, up = 1.35 + Math.min(sp, 35) * 0.018;
+  const back = 3.4 + Math.min(sp, 35) * 0.035, up = 1.15 + Math.min(sp, 35) * 0.012;
   const tx = S.p.x, ty = S.p.y + 1.0, tz = S.p.z;
   const dx = tx - Math.sin(camYaw) * back, dz = tz - Math.cos(camYaw) * back;
   const dy = Math.max(ty + up, hBase(dx, dz) + 1.0);
-  const kh = 1 - Math.exp(-7 * dt), kv = 1 - Math.exp(-3.5 * dt);
+  const kh = 1 - Math.exp(-7 * dt), kv = 1 - Math.exp(-(S.state === 'air' ? 2.2 : 3.5) * dt);
   cam.position.x += (dx - cam.position.x) * kh; cam.position.z += (dz - cam.position.z) * kh; cam.position.y += (dy - cam.position.y) * kv;
   if (S.state === 'ground' && sp > 18) cam.position.y += (Math.random() - 0.5) * 0.012 * (sp - 18);
-  cam.lookAt(tx + Math.sin(camYaw) * 3, ty - 0.7, tz + Math.cos(camYaw) * 3);
+  cam.lookAt(tx + Math.sin(camYaw) * 4, ty - 0.5, tz + Math.cos(camYaw) * 4);
   const fov = 62 + Math.min(sp, 35) * 0.42; if (Math.abs(cam.fov - fov) > 0.05){ cam.fov = lerp(cam.fov, fov, 0.1); cam.updateProjectionMatrix(); }
   sky.position.copy(cam.position); mountains.position.set(cam.position.x, cam.position.y - 300, cam.position.z);
-  sun.position.copy(S.p).addScaledVector(sunDir, 100); sun.target.position.copy(S.p);
+  if (AMB.flood) floodLight(); else sun.position.copy(S.p).addScaledVector(sunDir, 100);
+  sun.target.position.copy(S.p);
   if (Math.abs(S.p.x - tcx) > 30 || Math.abs(S.p.z + 70 - tcz) > 30) rebuildTerrain(S.p.x, S.p.z + 70);
   // flocons autour de la caméra
   for (let i = 0; i < NS; i++){
@@ -1221,8 +1297,14 @@ function frame(t){
   updateSkier(dt); updateParticles(dt); updateLift(dt); updateCamera(dt);
   renderer.render(scene, cam);
 }
+const ambBtns = document.querySelectorAll('.amb button');
+const pickAmb = name => { applyAmb(name); ambBtns.forEach(b => b.classList.toggle('on', b.dataset.amb === (AMB === AMBS.day ? 'day' : 'night'))); };
+ambBtns.forEach(b => b.addEventListener('click', () => pickAmb(b.dataset.amb)));
+let amb0 = 'night'; try { amb0 = localStorage.getItem('poudreuse-amb') || 'night'; } catch (e){}
+pickAmb(amb0);
 requestAnimationFrame(frame);
-$('go').addEventListener('click', () => { $('start').hidden = true; if (!AC) initAudio(); else AC.resume(); running = true; lastT = performance.now(); });
+document.body.classList.add('menu');
+$('go').addEventListener('click', () => { $('start').hidden = true; document.body.classList.remove('menu'); if (!AC) initAudio(); else AC.resume(); running = true; lastT = performance.now(); });
 document.addEventListener('visibilitychange', () => { if (document.hidden && AC) AC.suspend(); else if (AC && running) AC.resume(); });
 })();
 </script>
